@@ -243,3 +243,56 @@ class TestParseReminder:
         result = _parse_reminder("встреча завтра")
         assert result is not None
         assert not _has_explicit_time("встреча завтра")
+
+
+# ---------------------------------------------------------------------------
+# Уточнение времени (FSM waiting_for_time)
+# ---------------------------------------------------------------------------
+
+class TestWaitingForTime:
+    """
+    Проверяем логику которая решает нужно ли спрашивать время.
+    Если _has_explicit_time == False — бот должен спросить время.
+    Ответ пользователя потом парсится как время к уже известной дате.
+    """
+
+    def test_date_only_triggers_time_request(self):
+        # Только дата — время не указано, бот должен спросить
+        assert not _has_explicit_time("встреча завтра")
+        assert not _has_explicit_time("подъем 17.02")
+        assert not _has_explicit_time("дедлайн в пятницу")
+
+    def test_date_with_time_no_request(self):
+        # Дата + время — бот не должен спрашивать
+        assert _has_explicit_time("встреча завтра в 10:00")
+        assert _has_explicit_time("подъем 17.02 в 5 утра")
+        assert _has_explicit_time("дедлайн в пятницу в 18:00")
+
+    def test_time_answer_parseable(self):
+        # Ответ пользователя на уточнение времени должен парситься dateparser-ом
+        import dateparser
+        from app.bot.handlers.reminders import DATEPARSER_SETTINGS, _normalize_time
+
+        date_str = "17.02.2026"
+        for time_input in ["10:00", "9 утра", "7 вечера", "14:30"]:
+            time_str = _normalize_time(time_input)
+            dt = dateparser.parse(
+                f"{date_str} {time_str}",
+                languages=["ru"],
+                settings=DATEPARSER_SETTINGS,
+            )
+            assert dt is not None, f"Не распарсилось: '{time_input}'"
+            assert dt.year == 2026
+            assert dt.month == 2
+            assert dt.day == 17
+
+    def test_time_answer_does_not_override_reminder_text(self):
+        # Ответ «10:00» сам по себе не должен создавать новое напоминание —
+        # он должен попасть в handle_time_input, а не в remind_from_text.
+        # Косвенно проверяем: _parse_reminder("10:00") возвращает результат,
+        # но _has_explicit_time("10:00") == True, значит StateFilter(None)
+        # защищает от создания дубля — в состоянии waiting_for_time
+        # remind_from_text не сработает.
+        result = _parse_reminder("10:00")
+        assert result is not None  # парсится как время
+        assert _has_explicit_time("10:00")  # время явное — без StateFilter создало бы дубль
