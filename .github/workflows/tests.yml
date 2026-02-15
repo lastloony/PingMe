@@ -26,7 +26,7 @@ jobs:
           - 5432:5432
 
     env:
-      BOT_TOKEN: fake_token_for_tests
+      BOT_TOKEN: "1234567890:AABBccDDeeFFggHHiiJJkkLLmmNNooQQrrSS"
       DATABASE_URL: postgresql+asyncpg://pingme:pingme@localhost:5432/pingme
       POSTGRES_USER: pingme
       POSTGRES_PASSWORD: pingme
