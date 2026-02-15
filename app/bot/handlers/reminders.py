@@ -4,7 +4,7 @@ from datetime import datetime
 
 import dateparser
 from aiogram import F, Router
-from aiogram.filters import BaseFilter, Command
+from aiogram.filters import BaseFilter, Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
@@ -143,7 +143,9 @@ def _parse_reminder(raw: str) -> tuple[str, datetime] | None:
     # Убираем хвосты вроде «20.» или «в »
     reminder_text = re.sub(r"\b\d{1,2}[./]", "", reminder_text)
     reminder_text = re.sub(r"\s{2,}", " ", reminder_text).strip()
-    reminder_text = re.sub(r"^[\s,в\-–—]+|[\s,\-–—]+$", "", reminder_text)
+    reminder_text = re.sub(r"^[\s,\-–—]+|[\s,\-–—]+$", "", reminder_text)
+    reminder_text = re.sub(r"\s+в$", "", reminder_text)  # одиночное «в» в конце
+    reminder_text = re.sub(r"^в\s+", "", reminder_text)  # одиночное «в» в начале
 
     if not reminder_text:
         reminder_text = raw.strip()
@@ -165,7 +167,7 @@ class ReminderStates(StatesGroup):
     waiting_for_time = State()
 
 
-@router.message(F.text, HasDateFilter())
+@router.message(StateFilter(None), F.text, HasDateFilter())
 async def remind_from_text(message: Message, state: FSMContext):
     """Создаёт напоминание из произвольной фразы."""
     await _handle_reminder_text(message, message.text, state)
@@ -191,7 +193,7 @@ async def _handle_reminder_text(message: Message, raw: str, state: FSMContext):
         await state.set_state(ReminderStates.waiting_for_time)
         await state.update_data(
             reminder_text=reminder_text,
-            remind_date=remind_at.strftime("%Y-%m-%d"),
+            remind_date=remind_at.strftime("%d.%m.%Y"),
         )
         await message.answer(
             f"📅 Дата: <b>{remind_at.strftime('%d.%m.%Y')}</b>\n"
