@@ -15,6 +15,9 @@ class Settings(BaseSettings):
 
     # База данных
     database_url: str = "sqlite+aiosqlite:///./pingme.db"
+    postgres_user: str = "pingme"
+    postgres_password: str = "pingme"
+    postgres_db: str = "pingme"
 
     # FastAPI
     api_host: str = "0.0.0.0"
