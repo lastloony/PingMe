@@ -223,6 +223,13 @@ class TestParseReminder:
         assert "19" not in text
         assert "13" not in text
 
+    def test_trailing_v_removed(self):
+        result = _parse_reminder("включить посудомойку в 08:55")
+        assert result is not None
+        text, _ = result
+        assert not text.endswith(" в")
+        assert "включить посудомойку" in text
+
     # --- Не должны парситься ---
 
     def test_no_date_returns_none(self):
