@@ -1,4 +1,4 @@
-"""FastAPI application"""
+"""FastAPI-приложение"""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -8,12 +8,12 @@ from .routes import router
 
 app = FastAPI(
     title="PingMe API",
-    description="REST API for Telegram Reminder Bot",
+    description="REST API для Telegram-бота напоминаний",
     version="0.1.0",
     debug=settings.debug
 )
 
-# Add CORS middleware
+# CORS — разрешаем все источники (для разработки)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,13 +22,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
 app.include_router(router, prefix="/api/v1")
 
 
 @app.get("/")
 async def root():
-    """Health check endpoint"""
+    """Проверка работоспособности API"""
     return {
         "status": "ok",
         "service": "PingMe API",
@@ -38,5 +37,5 @@ async def root():
 
 @app.get("/health")
 async def health():
-    """Health check endpoint"""
+    """Healthcheck"""
     return {"status": "healthy"}

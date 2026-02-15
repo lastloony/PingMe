@@ -1,4 +1,4 @@
-"""Main application entry point"""
+"""Точка входа в приложение"""
 import asyncio
 import logging
 
@@ -8,11 +8,11 @@ from aiogram import Bot
 from app.config import settings
 from app.database import init_db
 from app.bot.bot import bot, dp
-from app.bot.handlers import basic, reminders
-from app.services.scheduler import start_scheduler, stop_scheduler
+from app.bot.handlers import basic, reminders  # noqa: F401 — регистрируют роутеры в dp
+from app.services.scheduler import start_scheduler, stop_scheduler, load_pending_reminders
 
 
-# Configure logging
+# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -21,38 +21,41 @@ logger = logging.getLogger(__name__)
 
 
 async def on_startup():
-    """Actions on bot startup"""
-    logger.info("Initializing database...")
+    """Действия при старте бота"""
+    logger.info("Инициализация базы данных...")
     await init_db()
-    
-    logger.info("Starting reminder scheduler...")
+
+    logger.info("Запуск планировщика напоминаний...")
     start_scheduler()
-    
-    logger.info("Bot started successfully!")
+
+    logger.info("Загрузка незавершённых напоминаний...")
+    await load_pending_reminders()
+
+    logger.info("Бот успешно запущен!")
 
 
 async def on_shutdown():
-    """Actions on bot shutdown"""
-    logger.info("Stopping reminder scheduler...")
+    """Действия при остановке бота"""
+    logger.info("Остановка планировщика...")
     stop_scheduler()
-    
-    logger.info("Closing bot session...")
+
+    logger.info("Закрытие сессии бота...")
     await bot.session.close()
-    
-    logger.info("Bot stopped!")
+
+    logger.info("Бот остановлен.")
 
 
 async def start_bot():
-    """Start the Telegram bot"""
+    """Запускает Telegram-бота в режиме polling"""
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
-    
-    logger.info("Starting bot polling...")
+
+    logger.info("Запуск polling...")
     await dp.start_polling(bot)
 
 
 async def start_api():
-    """Start the FastAPI server"""
+    """Запускает FastAPI-сервер через uvicorn"""
     config = uvicorn.Config(
         "app.api:app",
         host=settings.api_host,
@@ -65,10 +68,9 @@ async def start_api():
 
 
 async def main():
-    """Run both bot and API"""
-    logger.info("Starting PingMe application...")
-    
-    # Run bot and API concurrently
+    """Запускает бота и API одновременно"""
+    logger.info("Запуск PingMe...")
+
     await asyncio.gather(
         start_bot(),
         start_api()
@@ -79,4 +81,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Application stopped by user")
+        logger.info("Приложение остановлено пользователем")

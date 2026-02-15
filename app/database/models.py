@@ -1,18 +1,18 @@
-"""Database models"""
+"""ORM-модели базы данных"""
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import String, BigInteger, DateTime, Boolean, Text
+from sqlalchemy import String, BigInteger, Integer, DateTime, Boolean, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
 
 
 class User(Base):
-    """Telegram user model"""
+    """Модель пользователя Telegram"""
     __tablename__ = "users"
-    
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     first_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -26,10 +26,10 @@ class User(Base):
 
 
 class Reminder(Base):
-    """Reminder model"""
+    """Модель напоминания"""
     __tablename__ = "reminders"
-    
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, index=True)
     text: Mapped[str] = mapped_column(Text)
     remind_at: Mapped[datetime] = mapped_column(DateTime, index=True)

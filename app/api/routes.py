@@ -1,6 +1,5 @@
-"""API routes"""
+"""Маршруты REST API"""
 from typing import List
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -20,12 +19,12 @@ async def get_reminders(
     limit: int = 100,
     db: AsyncSession = Depends(get_db)
 ):
-    """Get all reminders for a user"""
+    """Возвращает список активных напоминаний пользователя"""
     query = select(Reminder).where(
         Reminder.user_id == user_id,
         Reminder.is_active == True
     ).offset(skip).limit(limit)
-    
+
     result = await db.execute(query)
     reminders = result.scalars().all()
     return reminders
@@ -36,7 +35,7 @@ async def create_reminder(
     reminder: ReminderCreate,
     db: AsyncSession = Depends(get_db)
 ):
-    """Create a new reminder"""
+    """Создаёт новое напоминание"""
     db_reminder = Reminder(
         user_id=reminder.user_id,
         text=reminder.text,
@@ -56,18 +55,18 @@ async def delete_reminder(
     user_id: int,
     db: AsyncSession = Depends(get_db)
 ):
-    """Delete a reminder"""
+    """Помечает напоминание как неактивное"""
     query = select(Reminder).where(
         Reminder.id == reminder_id,
         Reminder.user_id == user_id
     )
     result = await db.execute(query)
     reminder = result.scalar_one_or_none()
-    
+
     if not reminder:
         raise HTTPException(status_code=404, detail="Reminder not found")
-    
+
     reminder.is_active = False
     await db.flush()
-    
+
     return {"status": "deleted", "id": reminder_id}

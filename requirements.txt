@@ -12,6 +12,7 @@ pydantic-settings==2.5.2
 sqlalchemy==2.0.35
 alembic==1.13.3
 aiosqlite==0.20.0
+greenlet>=3.0.0
 
 # Scheduler
 apscheduler==3.10.4
@@ -22,3 +23,4 @@ python-dotenv==1.0.1
 # Utilities
 python-dateutil==2.9.0
 pytz==2024.2
+dateparser>=1.2.0

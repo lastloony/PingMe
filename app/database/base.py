@@ -1,4 +1,4 @@
-"""Database base configuration and session management"""
+"""Базовая конфигурация БД и управление сессиями"""
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
@@ -6,18 +6,18 @@ from app.config import settings
 
 
 class Base(DeclarativeBase):
-    """Base class for all database models"""
+    """Базовый класс для всех ORM-моделей"""
     pass
 
 
-# Create async engine
+# Асинхронный движок SQLAlchemy
 engine = create_async_engine(
     settings.database_url,
     echo=settings.debug,
     future=True
 )
 
-# Create async session factory
+# Фабрика асинхронных сессий
 AsyncSessionLocal = async_sessionmaker(
     engine,
     class_=AsyncSession,
@@ -28,13 +28,13 @@ AsyncSessionLocal = async_sessionmaker(
 
 
 async def init_db():
-    """Initialize database tables"""
+    """Создаёт таблицы в БД при первом запуске"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
 
 async def get_db() -> AsyncSession:
-    """Dependency for getting database session"""
+    """Dependency для получения сессии БД в FastAPI-роутах"""
     async with AsyncSessionLocal() as session:
         try:
             yield session

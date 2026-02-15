@@ -66,3 +66,6 @@ dmypy.json
 
 # Alembic
 alembic/versions/*.pyc
+
+# Claude Code
+CLAUDE.md
