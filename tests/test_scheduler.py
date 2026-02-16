@@ -58,6 +58,7 @@ def _make_reminder(
     r.text = text
     r.is_active = is_active
     r.is_confirmed = is_confirmed
+    r.is_snoozed = False
     r.message_id = None
     return r
 
