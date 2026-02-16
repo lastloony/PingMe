@@ -90,6 +90,14 @@ docker compose up --build -d
 | `POST`   | `/api/v1/reminders`        | Создать напоминание    |
 | `DELETE` | `/api/v1/reminders/{id}`   | Удалить напоминание    |
 
+## Разработка
+
+Установка dev-зависимостей:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
 ## Тесты
 
 ```bash
