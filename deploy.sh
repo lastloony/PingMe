@@ -21,7 +21,10 @@ if docker compose ps postgres | grep -q "running"; then
     # Оставляем только последние 10 бэкапов
     ls -t "$BACKUP_DIR"/backup_*.sql | tail -n +11 | xargs -r rm
 else
-    echo "      Postgres не запущен, бэкап пропущен."
+    echo "      ОШИБКА: Postgres не запущен, бэкап невозможен."
+    echo "      Запусти сначала: docker compose up -d postgres"
+    echo "      Или для первого деплоя запусти: docker compose up -d"
+    exit 1
 fi
 
 # --- Git pull ---

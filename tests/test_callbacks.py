@@ -22,6 +22,7 @@ def _make_reminder(
     text="тест",
     is_active=True,
     is_confirmed=False,
+    is_snoozed=False,
     remind_at=None,
 ):
     r = MagicMock()
@@ -30,6 +31,7 @@ def _make_reminder(
     r.text = text
     r.is_active = is_active
     r.is_confirmed = is_confirmed
+    r.is_snoozed = is_snoozed
     r.remind_at = remind_at or datetime.now() + timedelta(hours=1)
     r.message_id = None
     return r
@@ -166,6 +168,21 @@ class TestHandleSnooze:
             await handle_reminder_callback(cb)
 
         assert reminder.remind_at == fixed_now + timedelta(hours=1)
+
+    @pytest.mark.asyncio
+    async def test_is_snoozed_set_on_snooze(self):
+        reminder = _make_reminder(id=2, is_snoozed=False)
+        cb = _make_callback("rem:snooze:2")
+        session = _make_session(reminder)
+
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_job = MagicMock(return_value=None)
+
+        with patch("app.bot.handlers.reminders.AsyncSessionLocal", return_value=session), \
+             patch("app.bot.handlers.reminders.scheduler", mock_scheduler):
+            await handle_reminder_callback(cb)
+
+        assert reminder.is_snoozed is True
 
     @pytest.mark.asyncio
     async def test_is_confirmed_reset(self):
