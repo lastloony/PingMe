@@ -57,6 +57,12 @@ class TestNormalizeTime:
     def test_hours_genitive(self):
         assert _normalize_time("в 9 часа") == "в 09:00"
 
+    def test_dash_time(self):
+        assert _normalize_time("в 10-00") == "в 10:00"
+
+    def test_dash_time_no_leading_zero(self):
+        assert _normalize_time("в 9-30") == "в 9:30"
+
     def test_no_change(self):
         assert _normalize_time("встреча завтра") == "встреча завтра"
 
@@ -97,6 +103,9 @@ class TestHasExplicitTime:
 
     def test_hours(self):
         assert _has_explicit_time("через 2 часа")
+
+    def test_dash_format(self):
+        assert _has_explicit_time("завтра в 10-00")
 
     def test_no_time(self):
         assert not _has_explicit_time("встреча завтра")
@@ -237,6 +246,29 @@ class TestParseReminder:
         assert not text.endswith(" В")
         assert not text.endswith(" в")
 
+    def test_dash_time_format(self):
+        result = _parse_reminder("позвонить завтра в 10-00")
+        assert result is not None
+        text, dt = result
+        assert "позвонить" in text
+        assert dt.hour == 10
+        assert dt.minute == 0
+
+    def test_dash_time_minutes(self):
+        result = _parse_reminder("встреча завтра в 14-30")
+        assert result is not None
+        _, dt = result
+        assert dt.hour == 14
+        assert dt.minute == 30
+
+    def test_slash_date_format(self):
+        result = _parse_reminder("дедлайн 20/02 в 18:00")
+        assert result is not None
+        _, dt = result
+        assert dt.day == 20
+        assert dt.month == 2
+        assert dt.hour == 18
+
     # --- Не должны парситься ---
 
     def test_no_date_returns_none(self):
@@ -281,7 +313,7 @@ class TestWaitingForTime:
         from app.bot.handlers.reminders import DATEPARSER_SETTINGS, _normalize_time
 
         date_str = "17.02.2026"
-        for time_input in ["10:00", "9 утра", "7 вечера", "14:30"]:
+        for time_input in ["10:00", "9 утра", "7 вечера", "14:30", "10-00", "9-30"]:
             time_str = _normalize_time(time_input)
             dt = dateparser.parse(
                 f"{date_str} {time_str}",
