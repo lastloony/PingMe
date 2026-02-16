@@ -377,7 +377,7 @@ async def handle_reminder_callback(callback: CallbackQuery):
             from app.services.scheduler import send_reminder
             scheduler.add_job(
                 send_reminder,
-                trigger=DateTrigger(run_date=reminder.remind_at),
+                trigger=DateTrigger(timezone=_TZ, run_date=reminder.remind_at),
                 args=[reminder_id],
                 id=f"reminder_{reminder_id}",
                 replace_existing=True,

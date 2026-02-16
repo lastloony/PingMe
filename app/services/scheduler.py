@@ -21,9 +21,9 @@ def _now() -> datetime:
     return datetime.now(_TZ).replace(tzinfo=None)
 
 logger = logging.getLogger(__name__)
-scheduler = AsyncIOScheduler()
+scheduler = AsyncIOScheduler(timezone=_TZ)
 
-REMINDER_REPEAT_MINUTES = 15
+REMINDER_REPEAT_MINUTES = 1 if settings.debug else 15
 
 
 def _build_keyboard(reminder_id: int) -> InlineKeyboardMarkup:
@@ -52,7 +52,7 @@ async def send_reminder(reminder_id: int):
             repeat_time = _now() + timedelta(minutes=REMINDER_REPEAT_MINUTES)
             scheduler.add_job(
                 send_reminder,
-                trigger=DateTrigger(run_date=repeat_time),
+                trigger=DateTrigger(timezone=_TZ, run_date=repeat_time),
                 args=[reminder_id],
                 id=f"reminder_{reminder_id}",
                 replace_existing=True,
@@ -67,7 +67,7 @@ def schedule_reminder(reminder: Reminder):
     """Добавляет одноразовый job для конкретного напоминания"""
     scheduler.add_job(
         send_reminder,
-        trigger=DateTrigger(run_date=reminder.remind_at),
+        trigger=DateTrigger(timezone=_TZ, run_date=reminder.remind_at),
         args=[reminder.id],
         id=f"reminder_{reminder.id}",
         replace_existing=True,
@@ -94,7 +94,7 @@ async def load_pending_reminders():
         if reminder.remind_at <= now:
             scheduler.add_job(
                 send_reminder,
-                trigger=DateTrigger(run_date=now),
+                trigger=DateTrigger(timezone=_TZ, run_date=now),
                 args=[reminder.id],
                 id=f"reminder_{reminder.id}",
                 replace_existing=True,
