@@ -12,7 +12,7 @@ echo "=== PingMe deploy: $DATE ==="
 # --- Бэкап БД ---
 echo "[1/4] Бэкап базы данных..."
 mkdir -p "$BACKUP_DIR"
-if docker compose ps postgres | grep -q "running"; then
+if docker compose ps postgres | grep -q "Up"; then
     docker compose exec -T postgres pg_dump \
         -U "${POSTGRES_USER:-pingme}" \
         "${POSTGRES_DB:-pingme}" \
