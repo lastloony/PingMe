@@ -144,8 +144,8 @@ def _parse_reminder(raw: str) -> tuple[str, datetime] | None:
     reminder_text = re.sub(r"\b\d{1,2}[./]", "", reminder_text)
     reminder_text = re.sub(r"\s{2,}", " ", reminder_text).strip()
     reminder_text = re.sub(r"^[\s,\-–—]+|[\s,\-–—]+$", "", reminder_text)
-    reminder_text = re.sub(r"\s+в$", "", reminder_text)  # одиночное «в» в конце
-    reminder_text = re.sub(r"^в\s+", "", reminder_text)  # одиночное «в» в начале
+    reminder_text = re.sub(r"\s+в$", "", reminder_text, flags=re.IGNORECASE)  # одиночное «в» в конце
+    reminder_text = re.sub(r"^в\s+", "", reminder_text, flags=re.IGNORECASE)  # одиночное «в» в начале
 
     if not reminder_text:
         reminder_text = raw.strip()

@@ -230,6 +230,13 @@ class TestParseReminder:
         assert not text.endswith(" в")
         assert "включить посудомойку" in text
 
+    def test_trailing_v_uppercase_removed(self):
+        result = _parse_reminder("Наполнить кормушку у дымы В 11:30")
+        assert result is not None
+        text, _ = result
+        assert not text.endswith(" В")
+        assert not text.endswith(" в")
+
     # --- Не должны парситься ---
 
     def test_no_date_returns_none(self):
