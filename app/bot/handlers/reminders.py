@@ -363,7 +363,11 @@ async def _do_delete(message: Message, raw_id: str, state: FSMContext):
         await session.commit()
 
     await state.clear()
-    await message.answer("✅ Напоминание удалено.")
+    await message.answer(
+        f"✅ Напоминание удалено.\n\n"
+        f"🆔 {reminder.id} — {reminder.remind_at.strftime('%d.%m.%Y %H:%M')}\n"
+        f"📝 {reminder.text}"
+    )
 
 
 @router.message(Command("cancel"))
