@@ -237,7 +237,8 @@ async def test_send_reminder_repeat_within_15_minutes():
     before = datetime.now()
     with patch("app.services.scheduler.AsyncSessionLocal", return_value=mock_session), \
          patch("app.services.scheduler.bot") as mock_bot, \
-         patch("app.services.scheduler.scheduler", mock_scheduler):
+         patch("app.services.scheduler.scheduler", mock_scheduler), \
+         patch("app.services.scheduler.REMINDER_REPEAT_MINUTES", 15):
         mock_bot.send_message = AsyncMock(return_value=mock_msg)
         await send_reminder(3)
     after = datetime.now()
