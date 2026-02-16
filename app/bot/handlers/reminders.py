@@ -40,7 +40,8 @@ _EXPLICIT_TIME_RE = re.compile(
     r"\b\d{1,2}[:-]\d{2}\b"
     r"|\b\d{1,2}\s*(?:утра|вечера|вечером|ночи|дня|днём)\b"
     r"|\bчерез\s+\d"
-    r"|\b\d{1,2}\s*час[а-я]*\b",
+    r"|\b\d{1,2}\s*час[а-я]*\b"
+    r"|\bв\s+\d{1,2}\b",
     flags=re.IGNORECASE,
 )
 
@@ -77,6 +78,10 @@ _TIME_RE = re.compile(
 
 
 _DASH_TIME_RE = re.compile(r"\b(\d{1,2})-(\d{2})\b")
+_IN_HOUR_RE   = re.compile(
+    r"\bв\s+(\d{1,2})\b(?!\s*(?:утра|вечера|вечером|ночи|дня|днём|час[а-я]*|[-:]\d))",
+    flags=re.IGNORECASE,
+)
 
 
 def _normalize_time(text: str) -> str:
@@ -90,12 +95,13 @@ def _normalize_time(text: str) -> str:
     def dash_time(m: re.Match) -> str:
         return f"{m.group(1)}:{m.group(2)}"
 
-    text = _DASH_TIME_RE.sub(dash_time, text)  # «10-00» → «10:00»
+    text = _IN_HOUR_RE.sub(lambda m: f"в {int(m.group(1)):02d}:00", text)  # «в 20» → «в 20:00»
+    text = _DASH_TIME_RE.sub(dash_time, text)                              # «10-00» → «10:00»
     text = _MORNING_RE.sub(morning, text)
     text = _NIGHT_RE.sub(morning, text)
     text = _EVENING_RE.sub(evening, text)
     text = _DAY_RE.sub(evening, text)
-    text = _HOUR_RE.sub(morning, text)   # «13 часов» → «13:00»
+    text = _HOUR_RE.sub(morning, text)                                     # «13 часов» → «13:00»
     return text
 
 
@@ -299,7 +305,7 @@ def _build_table(reminders) -> str:
     rows = [header, sep]
     for r in reminders:
         text = r.text[:COL_TEXT] + "…" if len(r.text) > COL_TEXT else r.text
-        flag = " ⏱" if r.message_id else ""
+        flag = " ⏱" if r.is_snoozed else ""
         rows.append(
             f"{r.id:<4} {r.remind_at.strftime('%d.%m.%Y'):<11} "
             f"{r.remind_at.strftime('%H:%M'):<6} {text}{flag}"
@@ -503,6 +509,7 @@ async def handle_reminder_callback(callback: CallbackQuery):
         elif action == "snooze":
             reminder.remind_at = _now() + timedelta(hours=1)
             reminder.is_confirmed = False
+            reminder.is_snoozed = True
             reminder.message_id = None
             await session.commit()
             _cancel_reminder_job(reminder_id)

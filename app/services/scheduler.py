@@ -52,6 +52,7 @@ async def send_reminder(reminder_id: int):
                 reply_markup=_build_keyboard(reminder_id),
             )
             reminder.message_id = msg.message_id
+            reminder.is_snoozed = False
             await session.commit()
 
             # Планируем повтор через 15 минут если пользователь не нажал кнопку

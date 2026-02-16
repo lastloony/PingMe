@@ -96,6 +96,28 @@ docker compose up --build -d
 docker compose exec bot pytest tests/ -v
 ```
 
+## Версионирование
+
+Используется [bump-my-version](https://github.com/callowayproject/bump-my-version).
+
+```bash
+# Патч: 0.2.0 → 0.2.1  (багфиксы)
+bump-my-version bump patch
+
+# Минор: 0.2.0 → 0.3.0  (новые фичи)
+bump-my-version bump minor
+
+# Мажор: 0.2.0 → 1.0.0  (breaking changes)
+bump-my-version bump major
+```
+
+Команда автоматически обновляет версию в `pyproject.toml`, создаёт коммит и git-тег.
+После этого запушить:
+
+```bash
+git push origin main --tags
+```
+
 ## Структура проекта
 
 ```
@@ -131,10 +153,12 @@ docker compose exec -T postgres psql -U pingme pingme < backup.sql
 
 ## Стек
 
-- **Python 3.11**
+- **Python 3.13**
 - **aiogram 3.x** — Telegram Bot API
 - **FastAPI + uvicorn** — REST API
 - **SQLAlchemy 2.x async + asyncpg** — ORM + PostgreSQL
-- **APScheduler** — планировщик напоминаний
+- **APScheduler 3.x** — планировщик напоминаний
 - **dateparser** — парсинг дат на русском языке
+- **Alembic** — миграции базы данных
+- **bump-my-version** — версионирование
 - **Docker + PostgreSQL 16**
