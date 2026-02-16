@@ -299,7 +299,7 @@ def _build_table(reminders) -> str:
     rows = [header, sep]
     for r in reminders:
         text = r.text[:COL_TEXT] + "…" if len(r.text) > COL_TEXT else r.text
-        flag = " ⏱" if r.message_id else ""
+        flag = " ⏱" if r.is_snoozed else ""
         rows.append(
             f"{r.id:<4} {r.remind_at.strftime('%d.%m.%Y'):<11} "
             f"{r.remind_at.strftime('%H:%M'):<6} {text}{flag}"
@@ -503,6 +503,7 @@ async def handle_reminder_callback(callback: CallbackQuery):
         elif action == "snooze":
             reminder.remind_at = _now() + timedelta(hours=1)
             reminder.is_confirmed = False
+            reminder.is_snoozed = True
             reminder.message_id = None
             await session.commit()
             _cancel_reminder_job(reminder_id)
