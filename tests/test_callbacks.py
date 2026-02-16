@@ -234,6 +234,23 @@ class TestHandleSnooze:
         mock_job.remove.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_message_id_reset_on_snooze(self):
+        """После snooze message_id сбрасывается, чтобы /list не показывал метку «Отложено»."""
+        reminder = _make_reminder(id=2)
+        reminder.message_id = 42
+        cb = _make_callback("rem:snooze:2")
+        session = _make_session(reminder)
+
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_job = MagicMock(return_value=None)
+
+        with patch("app.bot.handlers.reminders.AsyncSessionLocal", return_value=session), \
+             patch("app.bot.handlers.reminders.scheduler", mock_scheduler):
+            await handle_reminder_callback(cb)
+
+        assert reminder.message_id is None
+
+    @pytest.mark.asyncio
     async def test_answers_callback(self):
         reminder = _make_reminder(id=2)
         cb = _make_callback("rem:snooze:2")

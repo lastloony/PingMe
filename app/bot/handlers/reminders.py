@@ -287,7 +287,7 @@ async def cmd_list(message: Message):
             .where(
                 Reminder.user_id == message.from_user.id,
                 Reminder.is_active == True,
-                Reminder.is_sent == False,
+                Reminder.is_confirmed == False,
             )
             .order_by(Reminder.remind_at)
         )
@@ -300,8 +300,9 @@ async def cmd_list(message: Message):
 
     lines = ["📋 <b>Твои напоминания:</b>\n"]
     for i, r in enumerate(reminders, 1):
+        status = "⏱ Отложено" if r.message_id else "⏰"
         lines.append(
-            f"{i}. <code>ID {r.id}</code> — {r.remind_at.strftime('%d.%m.%Y %H:%M')}\n"
+            f"{i}. <code>ID {r.id}</code> {status} — {r.remind_at.strftime('%d.%m.%Y %H:%M')}\n"
             f"   📝 {r.text}"
         )
     lines.append("\nДля удаления: /delete &lt;ID&gt;")
@@ -318,7 +319,7 @@ async def cmd_delete(message: Message, state: FSMContext):
                 .where(
                     Reminder.user_id == message.from_user.id,
                     Reminder.is_active == True,
-                    Reminder.is_sent == False,
+                    Reminder.is_confirmed == False,
                 )
                 .order_by(Reminder.remind_at)
             )
@@ -418,6 +419,7 @@ async def handle_reminder_callback(callback: CallbackQuery):
         elif action == "snooze":
             reminder.remind_at = _now() + timedelta(hours=1)
             reminder.is_confirmed = False
+            reminder.message_id = None
             await session.commit()
             _cancel_reminder_job(reminder_id)
             # Планируем через 1 час
