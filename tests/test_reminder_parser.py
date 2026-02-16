@@ -63,6 +63,12 @@ class TestNormalizeTime:
     def test_dash_time_no_leading_zero(self):
         assert _normalize_time("в 9-30") == "в 9:30"
 
+    def test_in_hour_only(self):
+        assert _normalize_time("в 20") == "в 20:00"
+
+    def test_in_hour_single_digit(self):
+        assert _normalize_time("в 9") == "в 09:00"
+
     def test_no_change(self):
         assert _normalize_time("встреча завтра") == "встреча завтра"
 
@@ -260,6 +266,14 @@ class TestParseReminder:
         _, dt = result
         assert dt.hour == 14
         assert dt.minute == 30
+
+    def test_hour_only_format(self):
+        result = _parse_reminder("заменить батарейку в 20")
+        assert result is not None
+        text, dt = result
+        assert "заменить батарейку" in text
+        assert dt.hour == 20
+        assert dt.minute == 0
 
     def test_slash_date_format(self):
         result = _parse_reminder("дедлайн 20/02 в 18:00")
