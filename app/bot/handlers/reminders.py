@@ -8,8 +8,7 @@ from aiogram import F, Router
 from aiogram.filters import BaseFilter, Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message
 from sqlalchemy import select
 
 from app.bot.bot import dp
@@ -279,33 +278,119 @@ async def _save_reminder(message: Message, reminder_text: str, remind_at: dateti
     )
 
 
-@router.message(Command("list"))
-async def cmd_list(message: Message):
+async def _fetch_reminders(user_id: int) -> list:
     async with AsyncSessionLocal() as session:
-        query = (
+        result = await session.execute(
             select(Reminder)
             .where(
-                Reminder.user_id == message.from_user.id,
+                Reminder.user_id == user_id,
                 Reminder.is_active == True,
-                Reminder.is_sent == False,
+                Reminder.is_confirmed == False,
             )
             .order_by(Reminder.remind_at)
         )
-        result = await session.execute(query)
-        reminders = result.scalars().all()
+        return result.scalars().all()
+
+
+def _build_table(reminders) -> str:
+    COL_TEXT = 18
+    header = f"{'ID':<4} {'Дата':<11} {'Время':<6} {'Текст'}"
+    sep = "─" * (4 + 1 + 11 + 1 + 6 + 1 + COL_TEXT)
+    rows = [header, sep]
+    for r in reminders:
+        text = r.text[:COL_TEXT] + "…" if len(r.text) > COL_TEXT else r.text
+        flag = " ⏱" if r.message_id else ""
+        rows.append(
+            f"{r.id:<4} {r.remind_at.strftime('%d.%m.%Y'):<11} "
+            f"{r.remind_at.strftime('%H:%M'):<6} {text}{flag}"
+        )
+    return "<pre>" + "\n".join(rows) + "</pre>"
+
+
+def _delete_mode_keyboard(reminders) -> InlineKeyboardMarkup:
+    pairs = [
+        InlineKeyboardButton(
+            text=f"🗑 {r.remind_at.strftime('%d.%m %H:%M')}",
+            callback_data=f"rem:del:{r.id}",
+        )
+        for r in reminders
+    ]
+    # по 2 кнопки в строку
+    rows = [pairs[i:i + 2] for i in range(0, len(pairs), 2)]
+    rows.append([InlineKeyboardButton(text="✕ Отмена", callback_data="rem:del_cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.message(Command("list"))
+async def cmd_list(message: Message):
+    reminders = await _fetch_reminders(message.from_user.id)
 
     if not reminders:
         await message.answer("📭 У тебя пока нет активных напоминаний.")
         return
 
-    lines = ["📋 <b>Твои напоминания:</b>\n"]
-    for i, r in enumerate(reminders, 1):
-        lines.append(
-            f"{i}. <code>ID {r.id}</code> — {r.remind_at.strftime('%d.%m.%Y %H:%M')}\n"
-            f"   📝 {r.text}"
+    await message.answer(
+        f"📋 <b>Напоминания ({len(reminders)}):</b>\n\n"
+        f"{_build_table(reminders)}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🗑 Удалить", callback_data="rem:del_mode"),
+        ]]),
+    )
+
+
+@router.callback_query(F.data == "rem:del_mode")
+async def handle_del_mode(callback: CallbackQuery):
+    reminders = await _fetch_reminders(callback.from_user.id)
+    if not reminders:
+        await callback.answer("Нет активных напоминаний.", show_alert=True)
+        return
+    await callback.message.edit_reply_markup(reply_markup=_delete_mode_keyboard(reminders))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "rem:del_cancel")
+async def handle_del_cancel(callback: CallbackQuery):
+    reminders = await _fetch_reminders(callback.from_user.id)
+    await callback.message.edit_reply_markup(
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🗑 Удалить", callback_data="rem:del_mode"),
+        ]])
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.regexp(r"^rem:del:(\d+)$"))
+async def handle_list_delete(callback: CallbackQuery):
+    reminder_id = int(re.match(r"^rem:del:(\d+)$", callback.data).group(1))
+
+    async with AsyncSessionLocal() as session:
+        query = select(Reminder).where(
+            Reminder.id == reminder_id,
+            Reminder.user_id == callback.from_user.id,
         )
-    lines.append("\nДля удаления: /delete &lt;ID&gt;")
-    await message.answer("\n".join(lines))
+        result = await session.execute(query)
+        reminder = result.scalar_one_or_none()
+
+        if not reminder:
+            await callback.answer("Напоминание не найдено.", show_alert=True)
+            return
+
+        deleted_text = reminder.text
+        reminder.is_active = False
+        await session.commit()
+
+    reminders = await _fetch_reminders(callback.from_user.id)
+
+    if not reminders:
+        await callback.message.edit_text("📭 У тебя пока нет активных напоминаний.")
+    else:
+        await callback.message.edit_text(
+            f"📋 <b>Напоминания ({len(reminders)}):</b>\n\n"
+            f"{_build_table(reminders)}",
+            reply_markup=_delete_mode_keyboard(reminders),
+        )
+
+    await callback.answer(f"✅ Удалено: {deleted_text[:30]}")
 
 
 @router.message(Command("delete"))
@@ -318,7 +403,7 @@ async def cmd_delete(message: Message, state: FSMContext):
                 .where(
                     Reminder.user_id == message.from_user.id,
                     Reminder.is_active == True,
-                    Reminder.is_sent == False,
+                    Reminder.is_confirmed == False,
                 )
                 .order_by(Reminder.remind_at)
             )
@@ -418,6 +503,7 @@ async def handle_reminder_callback(callback: CallbackQuery):
         elif action == "snooze":
             reminder.remind_at = _now() + timedelta(hours=1)
             reminder.is_confirmed = False
+            reminder.message_id = None
             await session.commit()
             _cancel_reminder_job(reminder_id)
             # Планируем через 1 час
