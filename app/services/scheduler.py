@@ -11,7 +11,7 @@ from app.database import Reminder
 from app.database.base import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
-scheduler = AsyncIOScheduler()
+scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
 
 
 async def send_reminder(reminder_id: int):
