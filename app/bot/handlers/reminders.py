@@ -22,6 +22,7 @@ DATEPARSER_SETTINGS = {
     "PREFER_DATES_FROM": "future",
     "RETURN_AS_TIMEZONE_AWARE": False,
     "DATE_ORDER": "DMY",
+    "TIMEZONE": "Europe/Moscow",
 }
 
 # Паттерны явного времени в тексте (только HH:MM с двоеточием, не с точкой)
