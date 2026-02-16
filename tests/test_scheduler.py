@@ -234,18 +234,16 @@ async def test_send_reminder_repeat_within_15_minutes():
     mock_scheduler = MagicMock()
     mock_scheduler.add_job.side_effect = capture_add_job
 
-    before = datetime.now()
+    fixed_now = datetime.now()
     with patch("app.services.scheduler.AsyncSessionLocal", return_value=mock_session), \
          patch("app.services.scheduler.bot") as mock_bot, \
          patch("app.services.scheduler.scheduler", mock_scheduler), \
-         patch("app.services.scheduler.REMINDER_REPEAT_MINUTES", 15):
+         patch("app.services.scheduler.REMINDER_REPEAT_MINUTES", 15), \
+         patch("app.services.scheduler._now", return_value=fixed_now):
         mock_bot.send_message = AsyncMock(return_value=mock_msg)
         await send_reminder(3)
-    after = datetime.now()
 
     trigger = captured_trigger["trigger"]
     assert isinstance(trigger, DateTrigger)
     run_date = trigger.run_date.replace(tzinfo=None)
-    expected_min = before + timedelta(minutes=14)
-    expected_max = after + timedelta(minutes=16)
-    assert expected_min <= run_date <= expected_max
+    assert run_date == fixed_now + timedelta(minutes=15)

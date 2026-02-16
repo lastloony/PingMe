@@ -156,16 +156,16 @@ class TestHandleSnooze:
         cb = _make_callback("rem:snooze:2")
         session = _make_session(reminder)
 
-        before = datetime.now()
         mock_scheduler = MagicMock()
         mock_scheduler.get_job = MagicMock(return_value=None)
 
+        fixed_now = datetime.now()
         with patch("app.bot.handlers.reminders.AsyncSessionLocal", return_value=session), \
-             patch("app.bot.handlers.reminders.scheduler", mock_scheduler):
+             patch("app.bot.handlers.reminders.scheduler", mock_scheduler), \
+             patch("app.bot.handlers.reminders._now", return_value=fixed_now):
             await handle_reminder_callback(cb)
 
-        after = datetime.now()
-        assert before + timedelta(minutes=59) <= reminder.remind_at <= after + timedelta(hours=1, minutes=1)
+        assert reminder.remind_at == fixed_now + timedelta(hours=1)
 
     @pytest.mark.asyncio
     async def test_is_confirmed_reset(self):
