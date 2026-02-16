@@ -3,6 +3,7 @@ import re
 from datetime import datetime, timedelta
 
 import dateparser
+import pytz
 from aiogram import F, Router
 from aiogram.filters import BaseFilter, Command, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -12,17 +13,27 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 
 from app.bot.bot import dp
+from app.config import settings
 from app.database import Reminder
 from app.database.base import AsyncSessionLocal
 from app.services.scheduler import schedule_reminder, scheduler
 
-
 router = Router()
+
+_TZ = pytz.timezone(settings.timezone)
+
+
+def _now() -> datetime:
+    """Текущее время в московском часовом поясе (наивный datetime для хранения в БД)."""
+    return datetime.now(_TZ).replace(tzinfo=None)
+
 
 DATEPARSER_SETTINGS = {
     "PREFER_DATES_FROM": "future",
     "RETURN_AS_TIMEZONE_AWARE": False,
     "DATE_ORDER": "DMY",
+    "TIMEZONE": settings.timezone,
+    "TO_TIMEZONE": settings.timezone,
 }
 
 # Паттерны явного времени в тексте (только HH:MM с двоеточием, не с точкой)
@@ -87,7 +98,7 @@ _SHORT_DATE_RE = re.compile(r"\b(\d{1,2})[./](\d{1,2})(?![./]\d)\b")
 
 def _expand_short_dates(text: str) -> str:
     """Разворачивает «19.02» → «19.02.2026» чтобы dateparser не терялся."""
-    year = datetime.now().year
+    year = _now().year
 
     def expand(m: re.Match) -> str:
         return f"{m.group(1)}.{m.group(2)}.{year}"
@@ -97,7 +108,7 @@ def _expand_short_dates(text: str) -> str:
 
 def _shift_to_future(dt: datetime) -> datetime:
     """Если дата в прошлом — сдвигаем на год вперёд (парсер выбрал прошлый год)."""
-    if dt <= datetime.now():
+    if dt <= _now():
         dt = dt.replace(year=dt.year + 1)
     return dt
 
@@ -204,7 +215,7 @@ async def _handle_reminder_text(message: Message, raw: str, state: FSMContext):
         )
         return
 
-    if remind_at <= datetime.now():
+    if remind_at <= _now():
         await message.answer(
             "❌ Время напоминания уже в прошлом.\n"
             "Укажи время в будущем."
@@ -232,7 +243,7 @@ async def handle_time_input(message: Message, state: FSMContext):
         )
         return
 
-    if dt <= datetime.now():
+    if dt <= _now():
         await message.answer("❌ Это время уже в прошлом. Укажи время в будущем.")
         return
 
@@ -357,7 +368,7 @@ async def handle_reminder_callback(callback: CallbackQuery):
             )
 
         elif action == "snooze":
-            reminder.remind_at = datetime.now() + timedelta(hours=1)
+            reminder.remind_at = _now() + timedelta(hours=1)
             reminder.is_confirmed = False
             await session.commit()
             _cancel_reminder_job(reminder_id)

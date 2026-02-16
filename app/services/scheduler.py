@@ -2,14 +2,23 @@
 import logging
 from datetime import datetime, timedelta
 
+import pytz
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
 from sqlalchemy import select
 
 from app.bot.bot import bot
+from app.config import settings
 from app.database import Reminder
 from app.database.base import AsyncSessionLocal
+
+_TZ = pytz.timezone(settings.timezone)
+
+
+def _now() -> datetime:
+    """Текущее время в московском часовом поясе (наивный datetime)."""
+    return datetime.now(_TZ).replace(tzinfo=None)
 
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
@@ -40,7 +49,7 @@ async def send_reminder(reminder_id: int):
             await session.commit()
 
             # Планируем повтор через 15 минут если пользователь не нажал кнопку
-            repeat_time = datetime.now() + timedelta(minutes=REMINDER_REPEAT_MINUTES)
+            repeat_time = _now() + timedelta(minutes=REMINDER_REPEAT_MINUTES)
             scheduler.add_job(
                 send_reminder,
                 trigger=DateTrigger(run_date=repeat_time),
@@ -77,7 +86,7 @@ async def load_pending_reminders():
         result = await session.execute(query)
         reminders = result.scalars().all()
 
-    now = datetime.now()
+    now = _now()
     scheduled = 0
     overdue = 0
 
