@@ -1,19 +1,20 @@
 """Хендлеры напоминаний с парсингом естественного языка"""
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import dateparser
 from aiogram import F, Router
 from aiogram.filters import BaseFilter, Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 
 from app.bot.bot import dp
 from app.database import Reminder
 from app.database.base import AsyncSessionLocal
-from app.services.scheduler import schedule_reminder
+from app.services.scheduler import schedule_reminder, scheduler
 
 
 router = Router()
@@ -325,6 +326,57 @@ async def cmd_cancel(message: Message, state: FSMContext):
         return
     await state.clear()
     await message.answer("✅ Действие отменено.")
+
+
+def _cancel_reminder_job(reminder_id: int):
+    job_id = f"reminder_{reminder_id}"
+    job = scheduler.get_job(job_id)
+    if job:
+        job.remove()
+
+
+@router.callback_query(F.data.regexp(r"^rem:(done|snooze):(\d+)$"))
+async def handle_reminder_callback(callback: CallbackQuery):
+    match = re.match(r"^rem:(done|snooze):(\d+)$", callback.data)
+    action = match.group(1)
+    reminder_id = int(match.group(2))
+
+    async with AsyncSessionLocal() as session:
+        reminder = await session.get(Reminder, reminder_id)
+        if not reminder or reminder.user_id != callback.from_user.id:
+            await callback.answer("Напоминание не найдено.", show_alert=True)
+            return
+
+        if action == "done":
+            reminder.is_confirmed = True
+            reminder.is_active = False
+            await session.commit()
+            _cancel_reminder_job(reminder_id)
+            await callback.message.edit_text(
+                f"⏰ <b>Напоминание!</b>\n\n{reminder.text}\n\n✅ <i>Выполнено</i>"
+            )
+
+        elif action == "snooze":
+            reminder.remind_at = datetime.now() + timedelta(hours=1)
+            reminder.is_confirmed = False
+            await session.commit()
+            _cancel_reminder_job(reminder_id)
+            # Планируем через 1 час
+            from apscheduler.triggers.date import DateTrigger
+            from app.services.scheduler import send_reminder
+            scheduler.add_job(
+                send_reminder,
+                trigger=DateTrigger(run_date=reminder.remind_at),
+                args=[reminder_id],
+                id=f"reminder_{reminder_id}",
+                replace_existing=True,
+                misfire_grace_time=60,
+            )
+            await callback.message.edit_text(
+                f"⏰ <b>Напоминание!</b>\n\n{reminder.text}\n\n⏱ <i>Отложено на 1 час</i>"
+            )
+
+    await callback.answer()
 
 
 dp.include_router(router)

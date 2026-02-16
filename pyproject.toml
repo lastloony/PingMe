@@ -11,6 +11,9 @@ line-length = 100
 max-line-length = 100
 extend-ignore = ["E203"]
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
 [tool.mypy]
 python_version = "3.13"
 ignore_missing_imports = true
