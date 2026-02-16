@@ -177,6 +177,7 @@ class HasDateFilter(BaseFilter):
 
 class ReminderStates(StatesGroup):
     waiting_for_time = State()
+    waiting_for_delete_id = State()
 
 
 @router.message(StateFilter(None), F.text, HasDateFilter())
@@ -300,16 +301,49 @@ async def cmd_list(message: Message):
 
 
 @router.message(Command("delete"))
-async def cmd_delete(message: Message):
+async def cmd_delete(message: Message, state: FSMContext):
     parts = message.text.split()
     if len(parts) < 2:
-        await message.answer("❌ Укажи ID напоминания. Например: /delete 1")
+        async with AsyncSessionLocal() as session:
+            query = (
+                select(Reminder)
+                .where(
+                    Reminder.user_id == message.from_user.id,
+                    Reminder.is_active == True,
+                    Reminder.is_sent == False,
+                )
+                .order_by(Reminder.remind_at)
+            )
+            result = await session.execute(query)
+            reminders = result.scalars().all()
+
+        if not reminders:
+            await message.answer("📭 У тебя нет активных напоминаний.")
+            return
+
+        lines = ["🗑 <b>Какое напоминание удалить?</b>\n"]
+        for r in reminders:
+            lines.append(
+                f"<code>{r.id}</code> — {r.remind_at.strftime('%d.%m.%Y %H:%M')} — {r.text}"
+            )
+        lines.append("\nВведи ID напоминания или /cancel для отмены:")
+        await state.set_state(ReminderStates.waiting_for_delete_id)
+        await message.answer("\n".join(lines))
         return
 
+    await _do_delete(message, parts[1], state)
+
+
+@router.message(ReminderStates.waiting_for_delete_id, F.text)
+async def handle_delete_id_input(message: Message, state: FSMContext):
+    await _do_delete(message, message.text.strip(), state)
+
+
+async def _do_delete(message: Message, raw_id: str, state: FSMContext):
     try:
-        reminder_id = int(parts[1])
+        reminder_id = int(raw_id)
     except ValueError:
-        await message.answer("❌ Неверный ID напоминания.")
+        await message.answer("❌ Неверный ID. Введи число.")
         return
 
     async with AsyncSessionLocal() as session:
@@ -322,11 +356,13 @@ async def cmd_delete(message: Message):
 
         if not reminder:
             await message.answer("❌ Напоминание не найдено.")
+            await state.clear()
             return
 
         reminder.is_active = False
         await session.commit()
 
+    await state.clear()
     await message.answer("✅ Напоминание удалено.")
 
 

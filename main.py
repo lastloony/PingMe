@@ -3,7 +3,7 @@ import asyncio
 import logging
 
 import uvicorn
-from aiogram import Bot
+from aiogram.types import BotCommand
 
 from app.config import settings
 from app.database import init_db
@@ -30,6 +30,14 @@ async def on_startup():
 
     logger.info("Загрузка незавершённых напоминаний...")
     await load_pending_reminders()
+
+    logger.info("Установка меню команд...")
+    await bot.set_my_commands([
+        BotCommand(command="list",   description="Мои напоминания"),
+        BotCommand(command="delete", description="Удалить напоминание /delete <ID>"),
+        BotCommand(command="cancel", description="Отменить текущее действие"),
+        BotCommand(command="help",   description="Справка"),
+    ])
 
     logger.info("Бот успешно запущен!")
 
