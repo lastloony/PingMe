@@ -35,6 +35,8 @@ class Reminder(Base):
     remind_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     is_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
