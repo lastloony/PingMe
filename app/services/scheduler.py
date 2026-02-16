@@ -40,6 +40,12 @@ async def send_reminder(reminder_id: int):
         if not reminder or not reminder.is_active or reminder.is_confirmed:
             return
         try:
+            if reminder.message_id:
+                try:
+                    await bot.delete_message(chat_id=reminder.user_id, message_id=reminder.message_id)
+                except Exception:
+                    pass  # сообщение уже удалено или недоступно
+
             msg = await bot.send_message(
                 chat_id=reminder.user_id,
                 text=f"⏰ <b>Напоминание!</b>\n\n{reminder.text}",
