@@ -67,6 +67,35 @@ docker compose up --build -d
 
 Бот и PostgreSQL поднимутся автоматически. Данные хранятся в Docker volume `postgres_data` и переживают перезапуски.
 
+## Деплой на сервер
+
+Первый деплой:
+
+```bash
+git clone <repo> && cd pingme
+cp .env.example .env
+# Заполнить .env
+docker compose up -d
+```
+
+Обновление (повторный деплой):
+
+```bash
+./deploy.sh
+```
+
+Скрипт автоматически:
+1. Делает бэкап БД в `backups/`
+2. Выполняет `git pull`
+3. Пересобирает образ бота
+4. Перезапускает контейнер (миграции накатываются автоматически)
+
+Логи после деплоя:
+
+```bash
+docker compose logs -f bot
+```
+
 ## Переменные окружения
 
 | Переменная          | Описание                   | По умолчанию              |
@@ -89,6 +118,14 @@ docker compose up --build -d
 | `GET`    | `/api/v1/reminders`        | Список напоминаний     |
 | `POST`   | `/api/v1/reminders`        | Создать напоминание    |
 | `DELETE` | `/api/v1/reminders/{id}`   | Удалить напоминание    |
+
+## Разработка
+
+Установка dev-зависимостей:
+
+```bash
+pip install -r requirements-dev.txt
+```
 
 ## Тесты
 
