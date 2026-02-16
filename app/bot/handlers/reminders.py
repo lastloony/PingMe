@@ -38,7 +38,7 @@ DATEPARSER_SETTINGS = {
 
 # Паттерны явного времени в тексте (только HH:MM с двоеточием, не с точкой)
 _EXPLICIT_TIME_RE = re.compile(
-    r"\b\d{1,2}:\d{2}\b"
+    r"\b\d{1,2}[:-]\d{2}\b"
     r"|\b\d{1,2}\s*(?:утра|вечера|вечером|ночи|дня|днём)\b"
     r"|\bчерез\s+\d"
     r"|\b\d{1,2}\s*час[а-я]*\b",
@@ -71,9 +71,13 @@ _DATE_WORDS_RE = re.compile(
 # Паттерны времени после нормализации
 _TIME_RE = re.compile(
     r"\b\d{1,2}[:.]\d{2}\b"
+    r"|\b\d{1,2}-\d{2}\b"
     r"|\bчерез\s+\d+\s*(?:минут[а-я]*|час[а-я]*)\b",
     flags=re.IGNORECASE,
 )
+
+
+_DASH_TIME_RE = re.compile(r"\b(\d{1,2})-(\d{2})\b")
 
 
 def _normalize_time(text: str) -> str:
@@ -84,6 +88,10 @@ def _normalize_time(text: str) -> str:
     def evening(m: re.Match) -> str:
         return f"{(int(m.group(1)) + 12) % 24:02d}:00"
 
+    def dash_time(m: re.Match) -> str:
+        return f"{m.group(1)}:{m.group(2)}"
+
+    text = _DASH_TIME_RE.sub(dash_time, text)  # «10-00» → «10:00»
     text = _MORNING_RE.sub(morning, text)
     text = _NIGHT_RE.sub(morning, text)
     text = _EVENING_RE.sub(evening, text)
