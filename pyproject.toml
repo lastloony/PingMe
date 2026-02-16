@@ -1,0 +1,19 @@
+[project]
+name = "pingme"
+version = "0.1.9"
+description = "Telegram reminder bot"
+requires-python = ">=3.13"
+
+[tool.black]
+line-length = 100
+
+[tool.flake8]
+max-line-length = 100
+extend-ignore = ["E203"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true

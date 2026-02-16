@@ -1,28 +1,39 @@
 """Хендлеры напоминаний с парсингом естественного языка"""
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import dateparser
+import pytz
 from aiogram import F, Router
 from aiogram.filters import BaseFilter, Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 
 from app.bot.bot import dp
+from app.config import settings
 from app.database import Reminder
 from app.database.base import AsyncSessionLocal
-from app.services.scheduler import schedule_reminder
-
+from app.services.scheduler import schedule_reminder, scheduler
 
 router = Router()
+
+_TZ = pytz.timezone(settings.timezone)
+
+
+def _now() -> datetime:
+    """Текущее время в московском часовом поясе (наивный datetime для хранения в БД)."""
+    return datetime.now(_TZ).replace(tzinfo=None)
+
 
 DATEPARSER_SETTINGS = {
     "PREFER_DATES_FROM": "future",
     "RETURN_AS_TIMEZONE_AWARE": False,
     "DATE_ORDER": "DMY",
-    "TIMEZONE": "Europe/Moscow",
+    "TIMEZONE": settings.timezone,
+    "TO_TIMEZONE": settings.timezone,
 }
 
 # Паттерны явного времени в тексте (только HH:MM с двоеточием, не с точкой)
@@ -87,7 +98,7 @@ _SHORT_DATE_RE = re.compile(r"\b(\d{1,2})[./](\d{1,2})(?![./]\d)\b")
 
 def _expand_short_dates(text: str) -> str:
     """Разворачивает «19.02» → «19.02.2026» чтобы dateparser не терялся."""
-    year = datetime.now().year
+    year = _now().year
 
     def expand(m: re.Match) -> str:
         return f"{m.group(1)}.{m.group(2)}.{year}"
@@ -97,7 +108,7 @@ def _expand_short_dates(text: str) -> str:
 
 def _shift_to_future(dt: datetime) -> datetime:
     """Если дата в прошлом — сдвигаем на год вперёд (парсер выбрал прошлый год)."""
-    if dt <= datetime.now():
+    if dt <= _now():
         dt = dt.replace(year=dt.year + 1)
     return dt
 
@@ -204,7 +215,7 @@ async def _handle_reminder_text(message: Message, raw: str, state: FSMContext):
         )
         return
 
-    if remind_at <= datetime.now():
+    if remind_at <= _now():
         await message.answer(
             "❌ Время напоминания уже в прошлом.\n"
             "Укажи время в будущем."
@@ -232,7 +243,7 @@ async def handle_time_input(message: Message, state: FSMContext):
         )
         return
 
-    if dt <= datetime.now():
+    if dt <= _now():
         await message.answer("❌ Это время уже в прошлом. Укажи время в будущем.")
         return
 
@@ -326,6 +337,57 @@ async def cmd_cancel(message: Message, state: FSMContext):
         return
     await state.clear()
     await message.answer("✅ Действие отменено.")
+
+
+def _cancel_reminder_job(reminder_id: int):
+    job_id = f"reminder_{reminder_id}"
+    job = scheduler.get_job(job_id)
+    if job:
+        job.remove()
+
+
+@router.callback_query(F.data.regexp(r"^rem:(done|snooze):(\d+)$"))
+async def handle_reminder_callback(callback: CallbackQuery):
+    match = re.match(r"^rem:(done|snooze):(\d+)$", callback.data)
+    action = match.group(1)
+    reminder_id = int(match.group(2))
+
+    async with AsyncSessionLocal() as session:
+        reminder = await session.get(Reminder, reminder_id)
+        if not reminder or reminder.user_id != callback.from_user.id:
+            await callback.answer("Напоминание не найдено.", show_alert=True)
+            return
+
+        if action == "done":
+            reminder.is_confirmed = True
+            reminder.is_active = False
+            await session.commit()
+            _cancel_reminder_job(reminder_id)
+            await callback.message.edit_text(
+                f"⏰ <b>Напоминание!</b>\n\n{reminder.text}\n\n✅ <i>Выполнено</i>"
+            )
+
+        elif action == "snooze":
+            reminder.remind_at = _now() + timedelta(hours=1)
+            reminder.is_confirmed = False
+            await session.commit()
+            _cancel_reminder_job(reminder_id)
+            # Планируем через 1 час
+            from apscheduler.triggers.date import DateTrigger
+            from app.services.scheduler import send_reminder
+            scheduler.add_job(
+                send_reminder,
+                trigger=DateTrigger(timezone=_TZ, run_date=reminder.remind_at),
+                args=[reminder_id],
+                id=f"reminder_{reminder_id}",
+                replace_existing=True,
+                misfire_grace_time=60,
+            )
+            await callback.message.edit_text(
+                f"⏰ <b>Напоминание!</b>\n\n{reminder.text}\n\n⏱ <i>Отложено на 1 час</i>"
+            )
+
+    await callback.answer()
 
 
 dp.include_router(router)
