@@ -17,10 +17,14 @@ from app.services.scheduler import _build_keyboard, send_reminder
 # ---------------------------------------------------------------------------
 
 class TestBuildKeyboard:
-    def test_has_two_buttons(self):
+    def test_has_two_rows(self):
         kb = _build_keyboard(42)
-        buttons = kb.inline_keyboard[0]
-        assert len(buttons) == 2
+        assert len(kb.inline_keyboard) == 2
+
+    def test_each_row_has_two_buttons(self):
+        kb = _build_keyboard(42)
+        assert len(kb.inline_keyboard[0]) == 2
+        assert len(kb.inline_keyboard[1]) == 2
 
     def test_done_callback(self):
         kb = _build_keyboard(7)
@@ -32,7 +36,19 @@ class TestBuildKeyboard:
         kb = _build_keyboard(7)
         snooze_btn = kb.inline_keyboard[0][1]
         assert snooze_btn.callback_data == "rem:snooze:7"
-        assert "Отложить" in snooze_btn.text
+        assert "+1 час" in snooze_btn.text
+
+    def test_snooze_day_callback(self):
+        kb = _build_keyboard(7)
+        btn = kb.inline_keyboard[1][0]
+        assert btn.callback_data == "rem:snooze_day:7"
+        assert "+1 день" in btn.text
+
+    def test_reschedule_callback(self):
+        kb = _build_keyboard(7)
+        btn = kb.inline_keyboard[1][1]
+        assert btn.callback_data == "rem:reschedule:7"
+        assert "Перенести" in btn.text
 
     def test_different_ids(self):
         kb1 = _build_keyboard(1)
