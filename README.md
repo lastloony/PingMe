@@ -81,6 +81,7 @@ docker compose up -d
 Обновление (повторный деплой):
 
 ```bash
+cd PingMe
 ./deploy.sh
 ```
 
