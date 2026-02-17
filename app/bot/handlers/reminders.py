@@ -11,11 +11,13 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message
 from sqlalchemy import select
 
+from apscheduler.triggers.date import DateTrigger
+
 from app.bot.bot import dp
 from app.config import settings
 from app.database import Reminder
 from app.database.base import AsyncSessionLocal
-from app.services.scheduler import schedule_reminder, scheduler
+from app.services.scheduler import schedule_reminder, scheduler, send_reminder
 
 router = Router()
 
@@ -191,6 +193,7 @@ class HasDateFilter(BaseFilter):
 class ReminderStates(StatesGroup):
     waiting_for_time = State()
     waiting_for_delete_id = State()
+    waiting_for_reschedule = State()
 
 
 @router.message(StateFilter(None), F.text, HasDateFilter())
@@ -471,9 +474,27 @@ async def _do_delete(message: Message, raw_id: str, state: FSMContext):
 
 @router.message(Command("cancel"))
 async def cmd_cancel(message: Message, state: FSMContext):
-    if await state.get_state() is None:
+    current_state = await state.get_state()
+    if current_state is None:
         await message.answer("Нечего отменять.")
         return
+
+    if current_state == ReminderStates.waiting_for_reschedule.state:
+        data = await state.get_data()
+        reminder_id = data.get("reminder_id")
+        original_remind_at_str = data.get("original_remind_at")
+        if reminder_id and original_remind_at_str:
+            original_remind_at = datetime.fromisoformat(original_remind_at_str)
+            run_date = original_remind_at if original_remind_at > _now() else _now()
+            scheduler.add_job(
+                send_reminder,
+                trigger=DateTrigger(timezone=_TZ, run_date=run_date),
+                args=[reminder_id],
+                id=f"reminder_{reminder_id}",
+                replace_existing=True,
+                misfire_grace_time=60,
+            )
+
     await state.clear()
     await message.answer("✅ Действие отменено.")
 
@@ -513,9 +534,6 @@ async def handle_reminder_callback(callback: CallbackQuery):
             reminder.message_id = None
             await session.commit()
             _cancel_reminder_job(reminder_id)
-            # Планируем через 1 час
-            from apscheduler.triggers.date import DateTrigger
-            from app.services.scheduler import send_reminder
             scheduler.add_job(
                 send_reminder,
                 trigger=DateTrigger(timezone=_TZ, run_date=reminder.remind_at),
@@ -529,6 +547,114 @@ async def handle_reminder_callback(callback: CallbackQuery):
             )
 
     await callback.answer()
+
+
+@router.callback_query(F.data.regexp(r"^rem:snooze_day:(\d+)$"))
+async def handle_snooze_day(callback: CallbackQuery):
+    reminder_id = int(re.match(r"^rem:snooze_day:(\d+)$", callback.data).group(1))
+
+    async with AsyncSessionLocal() as session:
+        reminder = await session.get(Reminder, reminder_id)
+        if not reminder or reminder.user_id != callback.from_user.id:
+            await callback.answer("Напоминание не найдено.", show_alert=True)
+            return
+
+        new_time = reminder.remind_at + timedelta(days=1)
+        if new_time <= _now():
+            new_time = _now() + timedelta(days=1)
+
+        reminder_text = reminder.text
+        reminder.remind_at = new_time
+        reminder.is_confirmed = False
+        reminder.is_snoozed = True
+        reminder.message_id = None
+        await session.commit()
+
+    _cancel_reminder_job(reminder_id)
+    scheduler.add_job(
+        send_reminder,
+        trigger=DateTrigger(timezone=_TZ, run_date=new_time),
+        args=[reminder_id],
+        id=f"reminder_{reminder_id}",
+        replace_existing=True,
+        misfire_grace_time=60,
+    )
+    await callback.message.edit_text(
+        f"⏰ <b>Напоминание!</b>\n\n{reminder_text}\n\n"
+        f"📅 <i>Перенесено на {new_time.strftime('%d.%m.%Y %H:%M')}</i>"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.regexp(r"^rem:reschedule:(\d+)$"))
+async def handle_reschedule_start(callback: CallbackQuery, state: FSMContext):
+    reminder_id = int(re.match(r"^rem:reschedule:(\d+)$", callback.data).group(1))
+
+    async with AsyncSessionLocal() as session:
+        reminder = await session.get(Reminder, reminder_id)
+        if not reminder or reminder.user_id != callback.from_user.id:
+            await callback.answer("Напоминание не найдено.", show_alert=True)
+            return
+        reminder_text = reminder.text
+        original_remind_at = reminder.remind_at.isoformat()
+
+    _cancel_reminder_job(reminder_id)
+    await state.set_state(ReminderStates.waiting_for_reschedule)
+    await state.update_data(
+        reminder_id=reminder_id,
+        reminder_text=reminder_text,
+        original_remind_at=original_remind_at,
+    )
+    await callback.message.edit_text(
+        f"⏰ <b>Напоминание!</b>\n\n{reminder_text}\n\n"
+        f"✏️ <i>На какое время перенести? Введи дату и время:</i>\n"
+        f"Например: <i>завтра в 10:00</i>, <i>20.02 в 15:00</i>, <i>через 2 часа</i>\n\n"
+        f"Для отмены: /cancel"
+    )
+    await callback.answer()
+
+
+@router.message(ReminderStates.waiting_for_reschedule, F.text)
+async def handle_reschedule_input(message: Message, state: FSMContext):
+    data = await state.get_data()
+    reminder_id = data["reminder_id"]
+
+    normalized = _normalize_time(_expand_short_dates(message.text.strip()))
+    dt = dateparser.parse(normalized, languages=["ru"], settings=DATEPARSER_SETTINGS)
+
+    if dt is None or dt <= _now():
+        await message.answer(
+            "❌ Не смог распознать дату/время или оно в прошлом. Попробуй ещё раз.\n"
+            "Например: <i>завтра в 10:00</i>, <i>20.02 в 15:00</i>, <i>через 2 часа</i>"
+        )
+        return
+
+    async with AsyncSessionLocal() as session:
+        reminder = await session.get(Reminder, reminder_id)
+        if not reminder or reminder.user_id != message.from_user.id:
+            await message.answer("❌ Напоминание не найдено.")
+            await state.clear()
+            return
+        reminder.remind_at = dt
+        reminder.is_confirmed = False
+        reminder.is_snoozed = True
+        reminder.message_id = None
+        await session.commit()
+
+    scheduler.add_job(
+        send_reminder,
+        trigger=DateTrigger(timezone=_TZ, run_date=dt),
+        args=[reminder_id],
+        id=f"reminder_{reminder_id}",
+        replace_existing=True,
+        misfire_grace_time=60,
+    )
+    await state.clear()
+    await message.answer(
+        f"✅ Напоминание перенесено!\n\n"
+        f"📝 {data['reminder_text']}\n"
+        f"⏰ {dt.strftime('%d.%m.%Y %H:%M')}"
+    )
 
 
 dp.include_router(router)

@@ -27,10 +27,16 @@ REMINDER_REPEAT_MINUTES = 1 if settings.debug else 15
 
 
 def _build_keyboard(reminder_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✅ Выполнено", callback_data=f"rem:done:{reminder_id}"),
-        InlineKeyboardButton(text="⏱ Отложить на 1ч", callback_data=f"rem:snooze:{reminder_id}"),
-    ]])
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Выполнено", callback_data=f"rem:done:{reminder_id}"),
+            InlineKeyboardButton(text="⏱ +1 час", callback_data=f"rem:snooze:{reminder_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="📅 +1 день", callback_data=f"rem:snooze_day:{reminder_id}"),
+            InlineKeyboardButton(text="✏️ Перенести", callback_data=f"rem:reschedule:{reminder_id}"),
+        ],
+    ])
 
 
 async def send_reminder(reminder_id: int):
