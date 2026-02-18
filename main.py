@@ -8,7 +8,9 @@ from aiogram.types import BotCommand
 from app.config import settings
 from app.database import init_db
 from app.bot.bot import bot, dp
-from app.bot.handlers import basic, reminders, settings, fallback  # noqa: F401 — регистрируют роутеры в dp
+from app.bot.handlers import basic, reminders  # noqa: F401 — регистрируют роутеры в dp
+from app.bot.handlers import settings as settings_handler  # noqa: F401
+from app.bot.handlers import fallback  # noqa: F401 — fallback всегда последним
 from app.services.scheduler import start_scheduler, stop_scheduler, load_pending_reminders
 
 
