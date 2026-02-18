@@ -8,7 +8,7 @@ from aiogram.types import BotCommand
 from app.config import settings
 from app.database import init_db
 from app.bot.bot import bot, dp
-from app.bot.handlers import basic, reminders, fallback  # noqa: F401 — регистрируют роутеры в dp
+from app.bot.handlers import basic, reminders, settings, fallback  # noqa: F401 — регистрируют роутеры в dp
 from app.services.scheduler import start_scheduler, stop_scheduler, load_pending_reminders
 
 
@@ -33,10 +33,11 @@ async def on_startup():
 
     logger.info("Установка меню команд...")
     await bot.set_my_commands([
-        BotCommand(command="list",   description="Мои напоминания"),
-        BotCommand(command="delete", description="Удалить напоминание /delete"),
-        BotCommand(command="cancel", description="Отменить текущее действие"),
-        BotCommand(command="help",   description="Справка"),
+        BotCommand(command="list",     description="Мои напоминания"),
+        BotCommand(command="delete",   description="Удалить напоминание /delete"),
+        BotCommand(command="settings", description="Настройки"),
+        BotCommand(command="cancel",   description="Отменить текущее действие"),
+        BotCommand(command="help",     description="Справка"),
     ])
 
     logger.info("Бот успешно запущен!")

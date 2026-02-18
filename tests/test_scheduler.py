@@ -79,6 +79,13 @@ def _make_reminder(
     return r
 
 
+def _add_execute_no_settings(mock_session):
+    """Добавляет мок session.execute() → нет UserSettings (fallback на дефолт)."""
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+
 @pytest.mark.asyncio
 async def test_send_reminder_skips_confirmed():
     """Не отправляет если is_confirmed=True."""
@@ -137,6 +144,7 @@ async def test_send_reminder_sends_with_keyboard():
     mock_session.get = AsyncMock(return_value=reminder)
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
+    _add_execute_no_settings(mock_session)
 
     mock_scheduler = MagicMock()
 
@@ -165,6 +173,7 @@ async def test_send_reminder_saves_message_id():
     mock_session.get = AsyncMock(return_value=reminder)
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
+    _add_execute_no_settings(mock_session)
 
     mock_scheduler = MagicMock()
 
@@ -189,6 +198,7 @@ async def test_send_reminder_schedules_repeat():
     mock_session.get = AsyncMock(return_value=reminder)
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
+    _add_execute_no_settings(mock_session)
 
     mock_scheduler = MagicMock()
 
@@ -215,6 +225,7 @@ async def test_send_reminder_repeat_job_id():
     mock_session.get = AsyncMock(return_value=reminder)
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
+    _add_execute_no_settings(mock_session)
 
     mock_scheduler = MagicMock()
 
@@ -242,6 +253,7 @@ async def test_send_reminder_repeat_within_15_minutes():
     mock_session.get = AsyncMock(return_value=reminder)
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
+    _add_execute_no_settings(mock_session)
 
     captured_trigger = {}
 

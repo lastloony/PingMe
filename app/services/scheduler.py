@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from app.bot.bot import bot
 from app.config import settings
-from app.database import Reminder
+from app.database import Reminder, UserSettings, DEFAULT_SNOOZE_MINUTES
 from app.database.base import AsyncSessionLocal
 
 _TZ = pytz.timezone(settings.timezone)
@@ -23,7 +23,7 @@ def _now() -> datetime:
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler(timezone=_TZ)
 
-REMINDER_REPEAT_MINUTES = 1 if settings.debug else 15
+REMINDER_REPEAT_MINUTES = 1 if settings.debug else DEFAULT_SNOOZE_MINUTES
 
 
 def _build_keyboard(reminder_id: int) -> InlineKeyboardMarkup:
@@ -45,6 +45,13 @@ async def send_reminder(reminder_id: int):
         reminder = await session.get(Reminder, reminder_id)
         if not reminder or not reminder.is_active or reminder.is_confirmed:
             return
+
+        user_settings = await session.execute(
+            select(UserSettings).where(UserSettings.user_id == reminder.user_id)
+        )
+        settings_obj = user_settings.scalar_one_or_none()
+        repeat_minutes = settings_obj.snooze_minutes if settings_obj else REMINDER_REPEAT_MINUTES
+
         try:
             if reminder.message_id:
                 try:
@@ -61,8 +68,8 @@ async def send_reminder(reminder_id: int):
             reminder.is_snoozed = False
             await session.commit()
 
-            # Планируем повтор через 15 минут если пользователь не нажал кнопку
-            repeat_time = _now() + timedelta(minutes=REMINDER_REPEAT_MINUTES)
+            # Планируем повтор через N минут (из настроек пользователя) если не нажал кнопку
+            repeat_time = _now() + timedelta(minutes=repeat_minutes)
             scheduler.add_job(
                 send_reminder,
                 trigger=DateTrigger(timezone=_TZ, run_date=repeat_time),
@@ -71,7 +78,7 @@ async def send_reminder(reminder_id: int):
                 replace_existing=True,
                 misfire_grace_time=60,
             )
-            logger.info(f"Напоминание {reminder_id} отправлено, повтор через {REMINDER_REPEAT_MINUTES} мин")
+            logger.info(f"Напоминание {reminder_id} отправлено, повтор через {repeat_minutes} мин")
         except Exception as e:
             logger.error(f"Ошибка при отправке напоминания {reminder_id}: {e}")
 
