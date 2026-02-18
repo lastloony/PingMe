@@ -15,7 +15,7 @@ from apscheduler.triggers.date import DateTrigger
 
 from app.bot.bot import dp
 from app.config import settings
-from app.database import Reminder
+from app.database import Reminder, UserSettings
 from app.database.base import AsyncSessionLocal
 from app.services.scheduler import schedule_reminder, scheduler, send_reminder
 
@@ -29,6 +29,12 @@ def _now() -> datetime:
     return datetime.now(_TZ).replace(tzinfo=None)
 
 
+def _now_tz(tz: pytz.BaseTzInfo) -> datetime:
+    """Текущее время в указанном часовом поясе (наивный datetime)."""
+    return datetime.now(tz).replace(tzinfo=None)
+
+
+# Дефолтные настройки dateparser (Москва) — используются только в HasDateFilter
 DATEPARSER_SETTINGS = {
     "PREFER_DATES_FROM": "future",
     "RETURN_AS_TIMEZONE_AWARE": False,
@@ -36,6 +42,18 @@ DATEPARSER_SETTINGS = {
     "TIMEZONE": settings.timezone,
     "TO_TIMEZONE": settings.timezone,
 }
+
+
+def _dateparser_settings(tz_name: str) -> dict:
+    """Настройки dateparser для конкретной таймзоны пользователя."""
+    return {
+        "PREFER_DATES_FROM": "future",
+        "RETURN_AS_TIMEZONE_AWARE": False,
+        "DATE_ORDER": "DMY",
+        "TIMEZONE": tz_name,
+        "TO_TIMEZONE": tz_name,
+    }
+
 
 # Паттерны явного времени в тексте (только HH:MM с двоеточием, не с точкой)
 _EXPLICIT_TIME_RE = re.compile(
@@ -97,13 +115,13 @@ def _normalize_time(text: str) -> str:
     def dash_time(m: re.Match) -> str:
         return f"{m.group(1)}:{m.group(2)}"
 
-    text = _IN_HOUR_RE.sub(lambda m: f"в {int(m.group(1)):02d}:00", text)  # «в 20» → «в 20:00»
-    text = _DASH_TIME_RE.sub(dash_time, text)                              # «10-00» → «10:00»
+    text = _IN_HOUR_RE.sub(lambda m: f"в {int(m.group(1)):02d}:00", text)
+    text = _DASH_TIME_RE.sub(dash_time, text)
     text = _MORNING_RE.sub(morning, text)
     text = _NIGHT_RE.sub(morning, text)
     text = _EVENING_RE.sub(evening, text)
     text = _DAY_RE.sub(evening, text)
-    text = _HOUR_RE.sub(morning, text)                                     # «13 часов» → «13:00»
+    text = _HOUR_RE.sub(morning, text)
     return text
 
 
@@ -111,9 +129,10 @@ def _normalize_time(text: str) -> str:
 _SHORT_DATE_RE = re.compile(r"\b(\d{1,2})[./](\d{1,2})(?![./]\d)\b")
 
 
-def _expand_short_dates(text: str) -> str:
+def _expand_short_dates(text: str, year: int | None = None) -> str:
     """Разворачивает «19.02» → «19.02.2026» чтобы dateparser не терялся."""
-    year = _now().year
+    if year is None:
+        year = _now().year
 
     def expand(m: re.Match) -> str:
         return f"{m.group(1)}.{m.group(2)}.{year}"
@@ -121,9 +140,11 @@ def _expand_short_dates(text: str) -> str:
     return _SHORT_DATE_RE.sub(expand, text)
 
 
-def _shift_to_future(dt: datetime) -> datetime:
+def _shift_to_future(dt: datetime, now: datetime | None = None) -> datetime:
     """Если дата в прошлом — сдвигаем на год вперёд (парсер выбрал прошлый год)."""
-    if dt <= _now():
+    if now is None:
+        now = _now()
+    if dt <= now:
         dt = dt.replace(year=dt.year + 1)
     return dt
 
@@ -139,40 +160,43 @@ def _extract_datetime_fragments(text: str) -> list[str]:
                 seen.add(val)
                 fragments.append(val)
 
-    # Убираем фрагменты, которые являются подстрокой другого фрагмента
-    # (например «20.02» внутри «20.02.2026»)
     return [f for f in fragments if not any(f != g and f in g for g in fragments)]
 
 
-def _parse_reminder(raw: str) -> tuple[str, datetime] | None:
+def _parse_reminder(
+    raw: str,
+    dp_settings: dict | None = None,
+    now: datetime | None = None,
+) -> tuple[str, datetime] | None:
     """
     Извлекает (текст напоминания, дату) из произвольной строки.
     Возвращает None если дату распознать не удалось.
     """
+    if dp_settings is None:
+        dp_settings = DATEPARSER_SETTINGS
+    if now is None:
+        now = _now()
+
     text = _normalize_time(_PREFIX_RE.sub("", raw.strip()))
 
-    # Шаг 1: находим датовые/временны́е фрагменты регулярками
     fragments = _extract_datetime_fragments(text)
     if not fragments:
         return None
 
-    # Шаг 2: парсим только фрагменты, без лишних слов
-    date_str = _expand_short_dates(" ".join(fragments))
-    dt = dateparser.parse(date_str, languages=["ru"], settings=DATEPARSER_SETTINGS)
+    date_str = _expand_short_dates(" ".join(fragments), year=now.year)
+    dt = dateparser.parse(date_str, languages=["ru"], settings=dp_settings)
     if dt is None:
         return None
-    dt = _shift_to_future(dt)
+    dt = _shift_to_future(dt, now=now)
 
-    # Шаг 3: вырезаем все фрагменты из текста — остаток и есть напоминание
     reminder_text = text
     for fragment in fragments:
         reminder_text = reminder_text.replace(fragment, "")
-    # Убираем хвосты вроде «20.» или «в »
     reminder_text = re.sub(r"\b\d{1,2}[./]", "", reminder_text)
     reminder_text = re.sub(r"\s{2,}", " ", reminder_text).strip()
     reminder_text = re.sub(r"^[\s,\-–—]+|[\s,\-–—]+$", "", reminder_text)
-    reminder_text = re.sub(r"\s+в$", "", reminder_text, flags=re.IGNORECASE)  # одиночное «в» в конце
-    reminder_text = re.sub(r"^в\s+", "", reminder_text, flags=re.IGNORECASE)  # одиночное «в» в начале
+    reminder_text = re.sub(r"\s+в$", "", reminder_text, flags=re.IGNORECASE)
+    reminder_text = re.sub(r"^в\s+", "", reminder_text, flags=re.IGNORECASE)
 
     if not reminder_text:
         reminder_text = raw.strip()
@@ -182,6 +206,16 @@ def _parse_reminder(raw: str) -> tuple[str, datetime] | None:
 
 def _has_explicit_time(text: str) -> bool:
     return bool(_EXPLICIT_TIME_RE.search(text))
+
+
+async def _load_user_tz(user_id: int) -> pytz.BaseTzInfo:
+    """Загружает часовой пояс пользователя из настроек (дефолт — Europe/Moscow)."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(UserSettings).where(UserSettings.user_id == user_id)
+        )
+        us = result.scalar_one_or_none()
+    return pytz.timezone(us.timezone if us else settings.timezone)
 
 
 class HasDateFilter(BaseFilter):
@@ -203,7 +237,10 @@ async def remind_from_text(message: Message, state: FSMContext):
 
 
 async def _handle_reminder_text(message: Message, raw: str, state: FSMContext):
-    parsed = _parse_reminder(raw)
+    user_tz = await _load_user_tz(message.from_user.id)
+    now = _now_tz(user_tz)
+    dp_s = _dateparser_settings(user_tz.zone)
+    parsed = _parse_reminder(raw, dp_settings=dp_s, now=now)
 
     if parsed is None:
         await message.answer(
@@ -217,12 +254,12 @@ async def _handle_reminder_text(message: Message, raw: str, state: FSMContext):
 
     reminder_text, remind_at = parsed
 
-    # Время не указано явно — спрашиваем
     if not _has_explicit_time(raw):
         await state.set_state(ReminderStates.waiting_for_time)
         await state.update_data(
             reminder_text=reminder_text,
             remind_date=remind_at.strftime("%d.%m.%Y"),
+            tz_name=user_tz.zone,
         )
         await message.answer(
             f"📅 Дата: <b>{remind_at.strftime('%d.%m.%Y')}</b>\n"
@@ -232,25 +269,29 @@ async def _handle_reminder_text(message: Message, raw: str, state: FSMContext):
         )
         return
 
-    if remind_at <= _now():
+    if remind_at <= now:
         await message.answer(
             "❌ Время напоминания уже в прошлом.\n"
             "Укажи время в будущем."
         )
         return
 
-    await _save_reminder(message, reminder_text, remind_at, state)
+    await _save_reminder(message, reminder_text, remind_at, state, user_tz)
 
 
 @router.message(ReminderStates.waiting_for_time, F.text)
 async def handle_time_input(message: Message, state: FSMContext):
     """Получает время от пользователя и завершает создание напоминания."""
     data = await state.get_data()
+    tz_name = data.get("tz_name", settings.timezone)
+    user_tz = pytz.timezone(tz_name)
+    dp_s = _dateparser_settings(tz_name)
+
     time_str = _normalize_time(message.text.strip())
     dt = dateparser.parse(
         f"{data['remind_date']} {time_str}",
         languages=["ru"],
-        settings=DATEPARSER_SETTINGS,
+        settings=dp_s,
     )
 
     if dt is None:
@@ -260,14 +301,20 @@ async def handle_time_input(message: Message, state: FSMContext):
         )
         return
 
-    if dt <= _now():
+    if dt <= _now_tz(user_tz):
         await message.answer("❌ Это время уже в прошлом. Укажи время в будущем.")
         return
 
-    await _save_reminder(message, data["reminder_text"], dt, state)
+    await _save_reminder(message, data["reminder_text"], dt, state, user_tz)
 
 
-async def _save_reminder(message: Message, reminder_text: str, remind_at: datetime, state: FSMContext):
+async def _save_reminder(
+    message: Message,
+    reminder_text: str,
+    remind_at: datetime,
+    state: FSMContext,
+    user_tz: pytz.BaseTzInfo,
+):
     async with AsyncSessionLocal() as session:
         reminder = Reminder(
             user_id=message.from_user.id,
@@ -277,7 +324,7 @@ async def _save_reminder(message: Message, reminder_text: str, remind_at: dateti
         session.add(reminder)
         await session.commit()
         await session.refresh(reminder)
-        schedule_reminder(reminder)
+        schedule_reminder(reminder, tz=user_tz)
 
     await state.clear()
     await message.answer(
@@ -324,7 +371,6 @@ def _delete_mode_keyboard(reminders) -> InlineKeyboardMarkup:
         )
         for r in reminders
     ]
-    # по 2 кнопки в строку
     rows = [pairs[i:i + 2] for i in range(0, len(pairs), 2)]
     rows.append([InlineKeyboardButton(text="✕ Отмена", callback_data="rem:del_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -483,12 +529,15 @@ async def cmd_cancel(message: Message, state: FSMContext):
         data = await state.get_data()
         reminder_id = data.get("reminder_id")
         original_remind_at_str = data.get("original_remind_at")
+        tz_name = data.get("tz_name", settings.timezone)
+        user_tz = pytz.timezone(tz_name)
         if reminder_id and original_remind_at_str:
             original_remind_at = datetime.fromisoformat(original_remind_at_str)
-            run_date = original_remind_at if original_remind_at > _now() else _now()
+            now = _now_tz(user_tz)
+            run_date = original_remind_at if original_remind_at > now else now
             scheduler.add_job(
                 send_reminder,
-                trigger=DateTrigger(timezone=_TZ, run_date=run_date),
+                trigger=DateTrigger(timezone=user_tz, run_date=run_date),
                 args=[reminder_id],
                 id=f"reminder_{reminder_id}",
                 replace_existing=True,
@@ -528,7 +577,13 @@ async def handle_reminder_callback(callback: CallbackQuery):
             )
 
         elif action == "snooze":
-            reminder.remind_at = _now() + timedelta(hours=1)
+            us_result = await session.execute(
+                select(UserSettings).where(UserSettings.user_id == callback.from_user.id)
+            )
+            us = us_result.scalar_one_or_none()
+            user_tz = pytz.timezone(us.timezone if us else settings.timezone)
+
+            reminder.remind_at = _now_tz(user_tz) + timedelta(hours=1)
             reminder.is_confirmed = False
             reminder.is_snoozed = True
             reminder.message_id = None
@@ -536,7 +591,7 @@ async def handle_reminder_callback(callback: CallbackQuery):
             _cancel_reminder_job(reminder_id)
             scheduler.add_job(
                 send_reminder,
-                trigger=DateTrigger(timezone=_TZ, run_date=reminder.remind_at),
+                trigger=DateTrigger(timezone=user_tz, run_date=reminder.remind_at),
                 args=[reminder_id],
                 id=f"reminder_{reminder_id}",
                 replace_existing=True,
@@ -559,9 +614,15 @@ async def handle_snooze_day(callback: CallbackQuery):
             await callback.answer("Напоминание не найдено.", show_alert=True)
             return
 
+        us_result = await session.execute(
+            select(UserSettings).where(UserSettings.user_id == callback.from_user.id)
+        )
+        us = us_result.scalar_one_or_none()
+        user_tz = pytz.timezone(us.timezone if us else settings.timezone)
+
         new_time = reminder.remind_at + timedelta(days=1)
-        if new_time <= _now():
-            new_time = _now() + timedelta(days=1)
+        if new_time <= _now_tz(user_tz):
+            new_time = _now_tz(user_tz) + timedelta(days=1)
 
         reminder_text = reminder.text
         reminder.remind_at = new_time
@@ -573,7 +634,7 @@ async def handle_snooze_day(callback: CallbackQuery):
     _cancel_reminder_job(reminder_id)
     scheduler.add_job(
         send_reminder,
-        trigger=DateTrigger(timezone=_TZ, run_date=new_time),
+        trigger=DateTrigger(timezone=user_tz, run_date=new_time),
         args=[reminder_id],
         id=f"reminder_{reminder_id}",
         replace_existing=True,
@@ -598,12 +659,14 @@ async def handle_reschedule_start(callback: CallbackQuery, state: FSMContext):
         reminder_text = reminder.text
         original_remind_at = reminder.remind_at.isoformat()
 
+    user_tz = await _load_user_tz(callback.from_user.id)
     _cancel_reminder_job(reminder_id)
     await state.set_state(ReminderStates.waiting_for_reschedule)
     await state.update_data(
         reminder_id=reminder_id,
         reminder_text=reminder_text,
         original_remind_at=original_remind_at,
+        tz_name=user_tz.zone,
     )
     await callback.message.edit_text(
         f"⏰ <b>Напоминание!</b>\n\n{reminder_text}\n\n"
@@ -618,11 +681,14 @@ async def handle_reschedule_start(callback: CallbackQuery, state: FSMContext):
 async def handle_reschedule_input(message: Message, state: FSMContext):
     data = await state.get_data()
     reminder_id = data["reminder_id"]
+    tz_name = data.get("tz_name", settings.timezone)
+    user_tz = pytz.timezone(tz_name)
+    dp_s = _dateparser_settings(tz_name)
 
-    normalized = _normalize_time(_expand_short_dates(message.text.strip()))
-    dt = dateparser.parse(normalized, languages=["ru"], settings=DATEPARSER_SETTINGS)
+    normalized = _normalize_time(_expand_short_dates(message.text.strip(), year=_now_tz(user_tz).year))
+    dt = dateparser.parse(normalized, languages=["ru"], settings=dp_s)
 
-    if dt is None or dt <= _now():
+    if dt is None or dt <= _now_tz(user_tz):
         await message.answer(
             "❌ Не смог распознать дату/время или оно в прошлом. Попробуй ещё раз.\n"
             "Например: <i>завтра в 10:00</i>, <i>20.02 в 15:00</i>, <i>через 2 часа</i>"
@@ -643,7 +709,7 @@ async def handle_reschedule_input(message: Message, state: FSMContext):
 
     scheduler.add_job(
         send_reminder,
-        trigger=DateTrigger(timezone=_TZ, run_date=dt),
+        trigger=DateTrigger(timezone=user_tz, run_date=dt),
         args=[reminder_id],
         id=f"reminder_{reminder_id}",
         replace_existing=True,
