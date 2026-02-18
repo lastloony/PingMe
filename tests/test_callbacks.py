@@ -603,7 +603,8 @@ class TestHandleRescheduleInput:
 
     @pytest.mark.asyncio
     async def test_reschedules_with_valid_input(self):
-        future_dt = datetime.now() + timedelta(hours=3)
+        fixed_now = datetime(2026, 1, 1, 12, 0, 0)
+        future_dt = fixed_now + timedelta(hours=3)
         reminder = _make_reminder(id=30)
         session = _make_session(reminder)
         state = self._make_state(reminder_id=30)
@@ -614,7 +615,7 @@ class TestHandleRescheduleInput:
         with patch("app.bot.handlers.reminders.AsyncSessionLocal", return_value=session), \
              patch("app.bot.handlers.reminders.scheduler", mock_scheduler), \
              patch("app.bot.handlers.reminders.dateparser.parse", return_value=future_dt), \
-             patch("app.bot.handlers.reminders._now", return_value=datetime.now()):
+             patch("app.bot.handlers.reminders._now_tz", side_effect=lambda tz: fixed_now):
             await handle_reschedule_input(msg, state)
 
         assert reminder.remind_at == future_dt
@@ -623,12 +624,13 @@ class TestHandleRescheduleInput:
 
     @pytest.mark.asyncio
     async def test_rejects_past_time(self):
-        past_dt = datetime.now() - timedelta(hours=1)
+        fixed_now = datetime(2026, 1, 1, 12, 0, 0)
+        past_dt = fixed_now - timedelta(hours=1)
         state = self._make_state()
         msg = self._make_message("вчера")
 
         with patch("app.bot.handlers.reminders.dateparser.parse", return_value=past_dt), \
-             patch("app.bot.handlers.reminders._now", return_value=datetime.now()):
+             patch("app.bot.handlers.reminders._now_tz", side_effect=lambda tz: fixed_now):
             await handle_reschedule_input(msg, state)
 
         msg.answer.assert_called_once()
@@ -637,11 +639,12 @@ class TestHandleRescheduleInput:
 
     @pytest.mark.asyncio
     async def test_rejects_unrecognized_input(self):
+        fixed_now = datetime(2026, 1, 1, 12, 0, 0)
         state = self._make_state()
         msg = self._make_message("бла бла")
 
         with patch("app.bot.handlers.reminders.dateparser.parse", return_value=None), \
-             patch("app.bot.handlers.reminders._now", return_value=datetime.now()):
+             patch("app.bot.handlers.reminders._now_tz", side_effect=lambda tz: fixed_now):
             await handle_reschedule_input(msg, state)
 
         msg.answer.assert_called_once()
@@ -661,7 +664,7 @@ class TestHandleRescheduleInput:
         with patch("app.bot.handlers.reminders.AsyncSessionLocal", return_value=session), \
              patch("app.bot.handlers.reminders.scheduler", mock_scheduler), \
              patch("app.bot.handlers.reminders.dateparser.parse", return_value=future_dt), \
-             patch("app.bot.handlers.reminders._now", return_value=datetime.now()):
+             patch("app.bot.handlers.reminders._now_tz", side_effect=lambda tz: datetime.now()):
             await handle_reschedule_input(msg, state)
 
         msg.answer.assert_called_once()
