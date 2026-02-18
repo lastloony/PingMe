@@ -268,7 +268,7 @@ async def test_send_reminder_repeat_within_15_minutes():
          patch("app.services.scheduler.bot") as mock_bot, \
          patch("app.services.scheduler.scheduler", mock_scheduler), \
          patch("app.services.scheduler.REMINDER_REPEAT_MINUTES", 15), \
-         patch("app.services.scheduler._now", return_value=fixed_now):
+         patch("app.services.scheduler._now_tz", side_effect=lambda tz: fixed_now):
         mock_bot.send_message = AsyncMock(return_value=mock_msg)
         await send_reminder(3)
 

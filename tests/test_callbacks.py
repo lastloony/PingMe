@@ -59,6 +59,10 @@ def _make_session(reminder):
     session.commit = AsyncMock()
     session.__aenter__ = AsyncMock(return_value=session)
     session.__aexit__ = AsyncMock(return_value=False)
+    # execute() → нет UserSettings → будет использован дефолтный timezone
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    session.execute = AsyncMock(return_value=mock_result)
     return session
 
 
@@ -169,7 +173,7 @@ class TestHandleSnooze:
         fixed_now = datetime.now()
         with patch("app.bot.handlers.reminders.AsyncSessionLocal", return_value=session), \
              patch("app.bot.handlers.reminders.scheduler", mock_scheduler), \
-             patch("app.bot.handlers.reminders._now", return_value=fixed_now):
+             patch("app.bot.handlers.reminders._now_tz", side_effect=lambda tz: fixed_now):
             await handle_reminder_callback(cb)
 
         assert reminder.remind_at == fixed_now + timedelta(hours=1)
@@ -390,7 +394,7 @@ class TestHandleSnoozeDay:
         fixed_now = datetime.now()
         with patch("app.bot.handlers.reminders.AsyncSessionLocal", return_value=session), \
              patch("app.bot.handlers.reminders.scheduler", mock_scheduler), \
-             patch("app.bot.handlers.reminders._now", return_value=fixed_now):
+             patch("app.bot.handlers.reminders._now_tz", side_effect=lambda tz: fixed_now):
             await handle_snooze_day(cb)
 
         assert reminder.remind_at == fixed_now + timedelta(days=1)

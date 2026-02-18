@@ -41,9 +41,10 @@ def _make_callback(data: str, user_id: int = 42):
     return cb
 
 
-def _make_user_settings(snooze_minutes: int = DEFAULT_SNOOZE_MINUTES):
+def _make_user_settings(snooze_minutes: int = DEFAULT_SNOOZE_MINUTES, timezone: str = "Europe/Moscow"):
     obj = MagicMock()
     obj.snooze_minutes = snooze_minutes
+    obj.timezone = timezone
     return obj
 
 
@@ -184,24 +185,25 @@ async def test_cmd_settings_default_snooze_in_text():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_cmd_settings_keyboard_marks_active_option():
-    """Текущая опция отмечена галочкой ✅."""
+async def test_cmd_settings_keyboard_marks_active_snooze_option():
+    """Текущая опция повтора отмечена галочкой ✅."""
     msg = _make_message()
     session = _make_session(settings_obj=_make_user_settings(snooze_minutes=30))
 
     with patch("app.bot.handlers.settings.AsyncSessionLocal", return_value=session):
         await cmd_settings(msg)
 
+    # Первая строка клавиатуры — кнопки повтора
     keyboard = msg.answer.call_args.kwargs["reply_markup"]
-    all_texts = [btn.text for row in keyboard.inline_keyboard for btn in row]
-    active = [t for t in all_texts if "✅" in t]
+    snooze_texts = [btn.text for btn in keyboard.inline_keyboard[0]]
+    active = [t for t in snooze_texts if "✅" in t]
     assert len(active) == 1
     assert "30" in active[0]
 
 
 @pytest.mark.asyncio
-async def test_cmd_settings_keyboard_inactive_options_no_checkmark():
-    """Неактивные опции не содержат галочку."""
+async def test_cmd_settings_keyboard_inactive_snooze_options_no_checkmark():
+    """Неактивные опции повтора не содержат галочку."""
     msg = _make_message()
     session = _make_session(settings_obj=_make_user_settings(snooze_minutes=15))
 
@@ -209,8 +211,8 @@ async def test_cmd_settings_keyboard_inactive_options_no_checkmark():
         await cmd_settings(msg)
 
     keyboard = msg.answer.call_args.kwargs["reply_markup"]
-    all_texts = [btn.text for row in keyboard.inline_keyboard for btn in row]
-    inactive = [t for t in all_texts if "✅" not in t]
+    snooze_texts = [btn.text for btn in keyboard.inline_keyboard[0]]
+    inactive = [t for t in snooze_texts if "✅" not in t]
     assert len(inactive) == 2
 
 
@@ -276,7 +278,7 @@ async def test_handle_snooze_setting_invalid_value():
 
 @pytest.mark.asyncio
 async def test_handle_snooze_setting_keyboard_updated():
-    """После обновления клавиатура отражает новое выбранное значение."""
+    """После обновления первая строка клавиатуры отражает новое выбранное значение повтора."""
     cb = _make_callback("settings:snooze:5")
     session = _make_session(settings_obj=_make_user_settings(snooze_minutes=15))
 
@@ -284,8 +286,9 @@ async def test_handle_snooze_setting_keyboard_updated():
         await handle_snooze_setting(cb)
 
     keyboard = cb.message.edit_text.call_args.kwargs["reply_markup"]
-    all_texts = [btn.text for row in keyboard.inline_keyboard for btn in row]
-    active = [t for t in all_texts if "✅" in t]
+    # Первая строка — кнопки повтора
+    snooze_texts = [btn.text for btn in keyboard.inline_keyboard[0]]
+    active = [t for t in snooze_texts if "✅" in t]
     assert len(active) == 1
     assert "5" in active[0]
 
@@ -317,7 +320,7 @@ async def test_send_reminder_uses_user_snooze_minutes():
     with patch("app.services.scheduler.AsyncSessionLocal", return_value=session), \
          patch("app.services.scheduler.bot") as mock_bot, \
          patch("app.services.scheduler.scheduler", mock_scheduler), \
-         patch("app.services.scheduler._now", return_value=fixed_now):
+         patch("app.services.scheduler._now_tz", side_effect=lambda tz: fixed_now):
         mock_bot.send_message = AsyncMock(return_value=mock_msg)
         await send_reminder(1)
 
@@ -349,7 +352,7 @@ async def test_send_reminder_uses_30_min_from_settings():
     with patch("app.services.scheduler.AsyncSessionLocal", return_value=session), \
          patch("app.services.scheduler.bot") as mock_bot, \
          patch("app.services.scheduler.scheduler", mock_scheduler), \
-         patch("app.services.scheduler._now", return_value=fixed_now):
+         patch("app.services.scheduler._now_tz", side_effect=lambda tz: fixed_now):
         mock_bot.send_message = AsyncMock(return_value=mock_msg)
         await send_reminder(2)
 
@@ -382,7 +385,7 @@ async def test_send_reminder_fallback_when_no_settings():
          patch("app.services.scheduler.bot") as mock_bot, \
          patch("app.services.scheduler.scheduler", mock_scheduler), \
          patch("app.services.scheduler.REMINDER_REPEAT_MINUTES", fallback_minutes), \
-         patch("app.services.scheduler._now", return_value=fixed_now):
+         patch("app.services.scheduler._now_tz", side_effect=lambda tz: fixed_now):
         mock_bot.send_message = AsyncMock(return_value=mock_msg)
         await send_reminder(3)
 
