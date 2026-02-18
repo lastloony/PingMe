@@ -8,7 +8,8 @@ Telegram-бот для создания напоминаний на естест
 - Поддержка русских форматов: `17.02`, `завтра`, `в пятницу`, `7 утра`, `13 часов`
 - Запрос времени если указана только дата
 - Inline-кнопки **Выполнено / Отложить на 1ч** при получении напоминания
-- Автоповтор каждые 15 минут пока пользователь не подтвердит
+- Автоповтор каждые N минут пока пользователь не подтвердит (настраивается)
+- Настройки пользователя: интервал повтора 5 / 15 / 30 минут, выбор часового пояса (UTC+2..UTC+12)
 - Список и удаление напоминаний
 - REST API (FastAPI)
 - PostgreSQL + Docker для продакшна
@@ -41,16 +42,17 @@ Telegram-бот для создания напоминаний на естест
 
 - **Выполнено** — напоминание закрывается, кнопки исчезают.
 - **Отложить на 1ч** — напоминание переносится на +1 час, кнопки исчезают.
-- Если кнопка не нажата — напоминание повторяется **каждые 15 минут** до подтверждения.
+- Если кнопка не нажата — напоминание повторяется через **N минут** до подтверждения (по умолчанию 15 мин, настраивается через `/settings`).
 
 ## Команды
 
-| Команда        | Описание                       |
-|----------------|--------------------------------|
-| `/list`        | Список активных напоминаний    |
-| `/delete <ID>` | Удалить напоминание            |
-| `/help`        | Справка                        |
-| `/cancel`      | Отменить текущее действие      |
+| Команда        | Описание                                   |
+|----------------|--------------------------------------------|
+| `/list`        | Список активных напоминаний                |
+| `/delete <ID>` | Удалить напоминание                        |
+| `/settings`    | Настройки (интервал повтора, часовой пояс) |
+| `/help`        | Справка                                    |
+| `/cancel`      | Отменить текущее действие                  |
 
 ## Запуск через Docker (рекомендуется)
 
@@ -67,19 +69,49 @@ docker compose up --build -d
 
 Бот и PostgreSQL поднимутся автоматически. Данные хранятся в Docker volume `postgres_data` и переживают перезапуски.
 
+## Деплой на сервер
+
+Первый деплой:
+
+```bash
+git clone <repo> && cd pingme
+cp .env.example .env
+# Заполнить .env
+docker compose up -d
+```
+
+Обновление (повторный деплой):
+
+```bash
+cd PingMe
+./deploy.sh
+```
+
+Скрипт автоматически:
+1. Делает бэкап БД в `backups/`
+2. Выполняет `git pull`
+3. Пересобирает образ бота
+4. Перезапускает контейнер (миграции накатываются автоматически)
+
+Логи после деплоя:
+
+```bash
+docker compose logs -f bot
+```
+
 ## Переменные окружения
 
-| Переменная          | Описание                   | По умолчанию              |
-|---------------------|----------------------------|---------------------------|
-| `BOT_TOKEN`         | Токен Telegram-бота        | —                         |
-| `DATABASE_URL`      | URL базы данных            | `postgresql+asyncpg://...`|
-| `POSTGRES_USER`     | Пользователь PostgreSQL    | `pingme`                  |
-| `POSTGRES_PASSWORD` | Пароль PostgreSQL          | `pingme`                  |
-| `POSTGRES_DB`       | Имя базы данных            | `pingme`                  |
-| `API_HOST`          | Хост FastAPI               | `0.0.0.0`                 |
-| `API_PORT`          | Порт FastAPI               | `8000`                    |
-| `TIMEZONE`          | Временная зона             | `Europe/Moscow`           |
-| `DEBUG`             | Режим отладки              | `false`                   |
+| Переменная          | Описание                                    | По умолчанию               |
+|---------------------|---------------------------------------------|----------------------------|
+| `BOT_TOKEN`         | Токен Telegram-бота                         | —                          |
+| `DATABASE_URL`      | URL базы данных                             | `postgresql+asyncpg://...` |
+| `POSTGRES_USER`     | Пользователь PostgreSQL                     | `pingme`                   |
+| `POSTGRES_PASSWORD` | Пароль PostgreSQL                           | `pingme`                   |
+| `POSTGRES_DB`       | Имя базы данных                             | `pingme`                   |
+| `API_HOST`          | Хост FastAPI                                | `0.0.0.0`                  |
+| `API_PORT`          | Порт FastAPI                                | `8000`                     |
+| `TIMEZONE`          | Часовой пояс планировщика (глобальный fallback) | `Europe/Moscow`        |
+| `DEBUG`             | Режим отладки (повтор раз в 1 мин)          | `false`                    |
 
 ## API
 
@@ -90,10 +122,40 @@ docker compose up --build -d
 | `POST`   | `/api/v1/reminders`        | Создать напоминание    |
 | `DELETE` | `/api/v1/reminders/{id}`   | Удалить напоминание    |
 
+## Разработка
+
+Установка dev-зависимостей:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
 ## Тесты
 
 ```bash
 docker compose exec bot pytest tests/ -v
+```
+
+## Версионирование
+
+Используется [bump-my-version](https://github.com/callowayproject/bump-my-version).
+
+```bash
+# Патч: 0.2.0 → 0.2.1  (багфиксы)
+bump-my-version bump patch
+
+# Минор: 0.2.0 → 0.3.0  (новые фичи)
+bump-my-version bump minor
+
+# Мажор: 0.2.0 → 1.0.0  (breaking changes)
+bump-my-version bump major
+```
+
+Команда автоматически обновляет версию в `pyproject.toml`, создаёт коммит и git-тег.
+После этого запушить:
+
+```bash
+git push origin main --tags
 ```
 
 ## Структура проекта
@@ -105,14 +167,19 @@ pingme/
 │   │   └── handlers/
 │   │       ├── basic.py       # /start, /help
 │   │       ├── reminders.py   # парсинг и создание напоминаний
-│   │       └── fallback.py    # неизвестные команды и текст
+│   │       ├── settings.py    # /settings — настройки пользователя
+│   │       └── fallback.py    # неизвестные команды и текст (всегда последний)
 │   ├── api/                   # FastAPI endpoints
 │   ├── database/              # модели и подключение
 │   ├── services/
 │   │   └── scheduler.py       # APScheduler
 │   └── config.py              # pydantic-settings
 ├── tests/
-│   └── test_reminder_parser.py
+│   ├── test_reminder_parser.py
+│   ├── test_scheduler.py
+│   ├── test_callbacks.py
+│   ├── test_settings.py
+│   └── test_main.py
 ├── Dockerfile
 ├── docker-compose.yml
 ├── .env.example
@@ -131,10 +198,12 @@ docker compose exec -T postgres psql -U pingme pingme < backup.sql
 
 ## Стек
 
-- **Python 3.11**
+- **Python 3.13**
 - **aiogram 3.x** — Telegram Bot API
 - **FastAPI + uvicorn** — REST API
 - **SQLAlchemy 2.x async + asyncpg** — ORM + PostgreSQL
-- **APScheduler** — планировщик напоминаний
+- **APScheduler 3.x** — планировщик напоминаний
 - **dateparser** — парсинг дат на русском языке
+- **Alembic** — миграции базы данных
+- **bump-my-version** — версионирование
 - **Docker + PostgreSQL 16**

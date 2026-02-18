@@ -1,7 +1,7 @@
 """Базовые хендлеры бота"""
 from aiogram import Router
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, ReplyKeyboardRemove
 
 from app.bot.bot import dp
 
@@ -22,7 +22,9 @@ async def cmd_start(message: Message):
         "• <i>выпить таблетку через 30 минут</i>\n\n"
         "<b>Команды:</b>\n"
         "/list — мои напоминания\n"
-        "/help — справка"
+        "/settings — настройки\n"
+        "/help — справка",
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
@@ -43,6 +45,7 @@ async def cmd_help(message: Message):
         "<b>Команды:</b>\n"
         "/list — список активных напоминаний\n"
         "/delete &lt;ID&gt; — удалить напоминание\n"
+        "/settings — настройки (интервал повтора)\n"
         "/cancel — отменить текущее действие"
     )
 

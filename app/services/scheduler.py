@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from app.bot.bot import bot
 from app.config import settings
-from app.database import Reminder
+from app.database import Reminder, UserSettings, DEFAULT_SNOOZE_MINUTES, DEFAULT_TIMEZONE
 from app.database.base import AsyncSessionLocal
 
 _TZ = pytz.timezone(settings.timezone)
@@ -20,17 +20,29 @@ def _now() -> datetime:
     """Текущее время в московском часовом поясе (наивный datetime)."""
     return datetime.now(_TZ).replace(tzinfo=None)
 
+
+def _now_tz(tz: pytz.BaseTzInfo) -> datetime:
+    """Текущее время в указанном часовом поясе (наивный datetime)."""
+    return datetime.now(tz).replace(tzinfo=None)
+
+
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler(timezone=_TZ)
 
-REMINDER_REPEAT_MINUTES = 1 if settings.debug else 15
+REMINDER_REPEAT_MINUTES = 1 if settings.debug else DEFAULT_SNOOZE_MINUTES
 
 
 def _build_keyboard(reminder_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✅ Выполнено", callback_data=f"rem:done:{reminder_id}"),
-        InlineKeyboardButton(text="⏱ Отложить на 1ч", callback_data=f"rem:snooze:{reminder_id}"),
-    ]])
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Выполнено", callback_data=f"rem:done:{reminder_id}"),
+            InlineKeyboardButton(text="⏱ +1 час", callback_data=f"rem:snooze:{reminder_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="📅 +1 день", callback_data=f"rem:snooze_day:{reminder_id}"),
+            InlineKeyboardButton(text="✏️ Перенести", callback_data=f"rem:reschedule:{reminder_id}"),
+        ],
+    ])
 
 
 async def send_reminder(reminder_id: int):
@@ -39,12 +51,20 @@ async def send_reminder(reminder_id: int):
         reminder = await session.get(Reminder, reminder_id)
         if not reminder or not reminder.is_active or reminder.is_confirmed:
             return
+
+        user_settings = await session.execute(
+            select(UserSettings).where(UserSettings.user_id == reminder.user_id)
+        )
+        settings_obj = user_settings.scalar_one_or_none()
+        repeat_minutes = settings_obj.snooze_minutes if settings_obj else REMINDER_REPEAT_MINUTES
+        user_tz = pytz.timezone(settings_obj.timezone if settings_obj else DEFAULT_TIMEZONE)
+
         try:
             if reminder.message_id:
                 try:
                     await bot.delete_message(chat_id=reminder.user_id, message_id=reminder.message_id)
                 except Exception:
-                    pass  # сообщение уже удалено или недоступно
+                    pass
 
             msg = await bot.send_message(
                 chat_id=reminder.user_id,
@@ -52,28 +72,29 @@ async def send_reminder(reminder_id: int):
                 reply_markup=_build_keyboard(reminder_id),
             )
             reminder.message_id = msg.message_id
+            reminder.is_snoozed = False
             await session.commit()
 
-            # Планируем повтор через 15 минут если пользователь не нажал кнопку
-            repeat_time = _now() + timedelta(minutes=REMINDER_REPEAT_MINUTES)
+            repeat_time = _now_tz(user_tz) + timedelta(minutes=repeat_minutes)
             scheduler.add_job(
                 send_reminder,
-                trigger=DateTrigger(timezone=_TZ, run_date=repeat_time),
+                trigger=DateTrigger(timezone=user_tz, run_date=repeat_time),
                 args=[reminder_id],
                 id=f"reminder_{reminder_id}",
                 replace_existing=True,
                 misfire_grace_time=60,
             )
-            logger.info(f"Напоминание {reminder_id} отправлено, повтор через {REMINDER_REPEAT_MINUTES} мин")
+            logger.info(f"Напоминание {reminder_id} отправлено, повтор через {repeat_minutes} мин")
         except Exception as e:
             logger.error(f"Ошибка при отправке напоминания {reminder_id}: {e}")
 
 
-def schedule_reminder(reminder: Reminder):
+def schedule_reminder(reminder: Reminder, tz: pytz.BaseTzInfo | None = None):
     """Добавляет одноразовый job для конкретного напоминания"""
+    job_tz = tz if tz is not None else _TZ
     scheduler.add_job(
         send_reminder,
-        trigger=DateTrigger(timezone=_TZ, run_date=reminder.remind_at),
+        trigger=DateTrigger(timezone=job_tz, run_date=reminder.remind_at),
         args=[reminder.id],
         id=f"reminder_{reminder.id}",
         replace_existing=True,
@@ -92,22 +113,35 @@ async def load_pending_reminders():
         result = await session.execute(query)
         reminders = result.scalars().all()
 
-    now = _now()
+        user_ids = list({r.user_id for r in reminders})
+        if user_ids:
+            us_result = await session.execute(
+                select(UserSettings).where(UserSettings.user_id.in_(user_ids))
+            )
+            tz_map = {
+                us.user_id: pytz.timezone(us.timezone)
+                for us in us_result.scalars().all()
+            }
+        else:
+            tz_map = {}
+
     scheduled = 0
     overdue = 0
 
     for reminder in reminders:
+        user_tz = tz_map.get(reminder.user_id, _TZ)
+        now = _now_tz(user_tz)
         if reminder.remind_at <= now:
             scheduler.add_job(
                 send_reminder,
-                trigger=DateTrigger(timezone=_TZ, run_date=now),
+                trigger=DateTrigger(timezone=user_tz, run_date=now),
                 args=[reminder.id],
                 id=f"reminder_{reminder.id}",
                 replace_existing=True,
             )
             overdue += 1
         else:
-            schedule_reminder(reminder)
+            schedule_reminder(reminder, tz=user_tz)
             scheduled += 1
 
     logger.info(f"Загружено напоминаний: {scheduled} запланировано, {overdue} просрочено")

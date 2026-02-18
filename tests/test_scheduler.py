@@ -17,10 +17,14 @@ from app.services.scheduler import _build_keyboard, send_reminder
 # ---------------------------------------------------------------------------
 
 class TestBuildKeyboard:
-    def test_has_two_buttons(self):
+    def test_has_two_rows(self):
         kb = _build_keyboard(42)
-        buttons = kb.inline_keyboard[0]
-        assert len(buttons) == 2
+        assert len(kb.inline_keyboard) == 2
+
+    def test_each_row_has_two_buttons(self):
+        kb = _build_keyboard(42)
+        assert len(kb.inline_keyboard[0]) == 2
+        assert len(kb.inline_keyboard[1]) == 2
 
     def test_done_callback(self):
         kb = _build_keyboard(7)
@@ -32,7 +36,19 @@ class TestBuildKeyboard:
         kb = _build_keyboard(7)
         snooze_btn = kb.inline_keyboard[0][1]
         assert snooze_btn.callback_data == "rem:snooze:7"
-        assert "Отложить" in snooze_btn.text
+        assert "+1 час" in snooze_btn.text
+
+    def test_snooze_day_callback(self):
+        kb = _build_keyboard(7)
+        btn = kb.inline_keyboard[1][0]
+        assert btn.callback_data == "rem:snooze_day:7"
+        assert "+1 день" in btn.text
+
+    def test_reschedule_callback(self):
+        kb = _build_keyboard(7)
+        btn = kb.inline_keyboard[1][1]
+        assert btn.callback_data == "rem:reschedule:7"
+        assert "Перенести" in btn.text
 
     def test_different_ids(self):
         kb1 = _build_keyboard(1)
@@ -58,8 +74,16 @@ def _make_reminder(
     r.text = text
     r.is_active = is_active
     r.is_confirmed = is_confirmed
+    r.is_snoozed = False
     r.message_id = None
     return r
+
+
+def _add_execute_no_settings(mock_session):
+    """Добавляет мок session.execute() → нет UserSettings (fallback на дефолт)."""
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    mock_session.execute = AsyncMock(return_value=mock_result)
 
 
 @pytest.mark.asyncio
@@ -120,6 +144,7 @@ async def test_send_reminder_sends_with_keyboard():
     mock_session.get = AsyncMock(return_value=reminder)
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
+    _add_execute_no_settings(mock_session)
 
     mock_scheduler = MagicMock()
 
@@ -148,6 +173,7 @@ async def test_send_reminder_saves_message_id():
     mock_session.get = AsyncMock(return_value=reminder)
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
+    _add_execute_no_settings(mock_session)
 
     mock_scheduler = MagicMock()
 
@@ -172,6 +198,7 @@ async def test_send_reminder_schedules_repeat():
     mock_session.get = AsyncMock(return_value=reminder)
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
+    _add_execute_no_settings(mock_session)
 
     mock_scheduler = MagicMock()
 
@@ -198,6 +225,7 @@ async def test_send_reminder_repeat_job_id():
     mock_session.get = AsyncMock(return_value=reminder)
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
+    _add_execute_no_settings(mock_session)
 
     mock_scheduler = MagicMock()
 
@@ -225,6 +253,7 @@ async def test_send_reminder_repeat_within_15_minutes():
     mock_session.get = AsyncMock(return_value=reminder)
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
+    _add_execute_no_settings(mock_session)
 
     captured_trigger = {}
 
@@ -239,7 +268,7 @@ async def test_send_reminder_repeat_within_15_minutes():
          patch("app.services.scheduler.bot") as mock_bot, \
          patch("app.services.scheduler.scheduler", mock_scheduler), \
          patch("app.services.scheduler.REMINDER_REPEAT_MINUTES", 15), \
-         patch("app.services.scheduler._now", return_value=fixed_now):
+         patch("app.services.scheduler._now_tz", side_effect=lambda tz: fixed_now):
         mock_bot.send_message = AsyncMock(return_value=mock_msg)
         await send_reminder(3)
 
