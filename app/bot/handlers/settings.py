@@ -40,12 +40,11 @@ def _settings_text(snooze_minutes: int, tz_id: str) -> str:
     return (
         f"⚙️ <b>Настройки</b>\n\n"
         f"Повтор напоминания: <b>{snooze_minutes} мин</b>\n"
-        f"Часовой пояс: <b>{_tz_label(tz_id)}</b>\n\n"
-        f"Выбери интервал повтора и часовой пояс:"
+        f"Часовой пояс: <b>{_tz_label(tz_id)}</b>"
     )
 
 
-def _settings_keyboard(current_snooze: int, current_tz: str) -> InlineKeyboardMarkup:
+def _settings_keyboard(current_snooze: int, current_tz: str, tz_expanded: bool = False) -> InlineKeyboardMarkup:
     snooze_row = [
         InlineKeyboardButton(
             text=f"{'✅ ' if current_snooze == m else ''}{m} мин",
@@ -53,15 +52,26 @@ def _settings_keyboard(current_snooze: int, current_tz: str) -> InlineKeyboardMa
         )
         for m in SNOOZE_OPTIONS
     ]
-    tz_buttons = [
-        InlineKeyboardButton(
-            text=f"{'✅ ' if current_tz == tz_id else ''}{label}",
-            callback_data=f"settings:tz:{tz_id}",
-        )
-        for label, tz_id in TIMEZONE_OPTIONS
-    ]
-    tz_rows = [tz_buttons[i:i + 4] for i in range(0, len(tz_buttons), 4)]
-    return InlineKeyboardMarkup(inline_keyboard=[snooze_row] + tz_rows)
+
+    if tz_expanded:
+        tz_buttons = [
+            InlineKeyboardButton(
+                text=f"{'✅ ' if current_tz == tz_id else ''}{label}",
+                callback_data=f"settings:tz:{tz_id}",
+            )
+            for label, tz_id in TIMEZONE_OPTIONS
+        ]
+        tz_rows = [tz_buttons[i:i + 4] for i in range(0, len(tz_buttons), 4)]
+        close_row = [InlineKeyboardButton(text="✕ Свернуть", callback_data="settings:tz_close")]
+        return InlineKeyboardMarkup(inline_keyboard=[snooze_row] + tz_rows + [close_row])
+    else:
+        tz_row = [
+            InlineKeyboardButton(
+                text=f"🌍 Часовой пояс: {_tz_label(current_tz)} ▸",
+                callback_data="settings:tz_open",
+            )
+        ]
+        return InlineKeyboardMarkup(inline_keyboard=[snooze_row, tz_row])
 
 
 async def _get_or_create_settings(user_id: int, session) -> UserSettings:
@@ -106,6 +116,28 @@ async def handle_snooze_setting(callback: CallbackQuery):
         reply_markup=_settings_keyboard(minutes, current_tz),
     )
     await callback.answer(f"✅ Интервал повтора: {minutes} мин")
+
+
+@router.callback_query(F.data == "settings:tz_open")
+async def handle_tz_open(callback: CallbackQuery):
+    async with AsyncSessionLocal() as session:
+        obj = await _get_or_create_settings(callback.from_user.id, session)
+
+    await callback.message.edit_reply_markup(
+        reply_markup=_settings_keyboard(obj.snooze_minutes, obj.timezone, tz_expanded=True),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "settings:tz_close")
+async def handle_tz_close(callback: CallbackQuery):
+    async with AsyncSessionLocal() as session:
+        obj = await _get_or_create_settings(callback.from_user.id, session)
+
+    await callback.message.edit_reply_markup(
+        reply_markup=_settings_keyboard(obj.snooze_minutes, obj.timezone, tz_expanded=False),
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data.regexp(r"^settings:tz:(.+)$"))

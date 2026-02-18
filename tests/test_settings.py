@@ -12,7 +12,11 @@ import pytest
 from app.bot.handlers.settings import (
     cmd_settings,
     handle_snooze_setting,
+    handle_tz_open,
+    handle_tz_close,
+    handle_timezone_setting,
     SNOOZE_OPTIONS,
+    TIMEZONE_OPTIONS,
 )
 from app.database import DEFAULT_SNOOZE_MINUTES
 from app.services.scheduler import send_reminder
@@ -128,15 +132,16 @@ async def test_cmd_settings_shows_current_snooze():
 
 @pytest.mark.asyncio
 async def test_cmd_settings_shows_keyboard():
-    """/settings возвращает inline-клавиатуру."""
+    """/settings возвращает inline-клавиатуру с 2 строками (свёрнутый вид)."""
     msg = _make_message()
     session = _make_session(settings_obj=_make_user_settings(snooze_minutes=15))
 
     with patch("app.bot.handlers.settings.AsyncSessionLocal", return_value=session):
         await cmd_settings(msg)
 
-    kwargs = msg.answer.call_args.kwargs
-    assert kwargs.get("reply_markup") is not None
+    kb = msg.answer.call_args.kwargs.get("reply_markup")
+    assert kb is not None
+    assert len(kb.inline_keyboard) == 2  # строка повтора + кнопка timezone
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +219,99 @@ async def test_cmd_settings_keyboard_inactive_snooze_options_no_checkmark():
     snooze_texts = [btn.text for btn in keyboard.inline_keyboard[0]]
     inactive = [t for t in snooze_texts if "✅" not in t]
     assert len(inactive) == 2
+
+
+@pytest.mark.asyncio
+async def test_cmd_settings_keyboard_tz_button_collapsed():
+    """В свёрнутом виде вторая строка — одна кнопка с callback settings:tz_open."""
+    msg = _make_message()
+    session = _make_session(settings_obj=_make_user_settings(snooze_minutes=15))
+
+    with patch("app.bot.handlers.settings.AsyncSessionLocal", return_value=session):
+        await cmd_settings(msg)
+
+    kb = msg.answer.call_args.kwargs["reply_markup"]
+    tz_row = kb.inline_keyboard[1]
+    assert len(tz_row) == 1
+    assert tz_row[0].callback_data == "settings:tz_open"
+
+
+@pytest.mark.asyncio
+async def test_handle_tz_open_expands_keyboard():
+    """handle_tz_open раскрывает все кнопки часовых поясов."""
+    cb = _make_callback("settings:tz_open")
+    cb.message.edit_reply_markup = AsyncMock()
+    session = _make_session(settings_obj=_make_user_settings(snooze_minutes=15))
+
+    with patch("app.bot.handlers.settings.AsyncSessionLocal", return_value=session):
+        await handle_tz_open(cb)
+
+    cb.message.edit_reply_markup.assert_called_once()
+    kb = cb.message.edit_reply_markup.call_args.kwargs["reply_markup"]
+    all_texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert any("UTC" in t for t in all_texts)
+    assert any("Свернуть" in t for t in all_texts)
+    assert len(kb.inline_keyboard) > 2  # snooze + tz-строки + свернуть
+
+
+@pytest.mark.asyncio
+async def test_handle_tz_open_shows_all_tz_options():
+    """В раскрытом виде присутствуют все варианты часовых поясов."""
+    cb = _make_callback("settings:tz_open")
+    cb.message.edit_reply_markup = AsyncMock()
+    session = _make_session(settings_obj=_make_user_settings(snooze_minutes=15))
+
+    with patch("app.bot.handlers.settings.AsyncSessionLocal", return_value=session):
+        await handle_tz_open(cb)
+
+    kb = cb.message.edit_reply_markup.call_args.kwargs["reply_markup"]
+    all_datas = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+    tz_datas = [d for d in all_datas if d and d.startswith("settings:tz:")]
+    assert len(tz_datas) == len(TIMEZONE_OPTIONS)
+
+
+@pytest.mark.asyncio
+async def test_handle_tz_close_collapses_keyboard():
+    """handle_tz_close сворачивает клавиатуру обратно к 2 строкам."""
+    cb = _make_callback("settings:tz_close")
+    cb.message.edit_reply_markup = AsyncMock()
+    session = _make_session(settings_obj=_make_user_settings(snooze_minutes=15))
+
+    with patch("app.bot.handlers.settings.AsyncSessionLocal", return_value=session):
+        await handle_tz_close(cb)
+
+    kb = cb.message.edit_reply_markup.call_args.kwargs["reply_markup"]
+    assert len(kb.inline_keyboard) == 2
+    assert kb.inline_keyboard[1][0].callback_data == "settings:tz_open"
+
+
+@pytest.mark.asyncio
+async def test_handle_timezone_setting_updates_and_collapses():
+    """После выбора часового пояса клавиатура сворачивается (2 строки)."""
+    cb = _make_callback("settings:tz:Asia/Yekaterinburg")
+    existing = _make_user_settings(snooze_minutes=15, timezone="Europe/Moscow")
+    session = _make_session(settings_obj=existing)
+
+    with patch("app.bot.handlers.settings.AsyncSessionLocal", return_value=session):
+        await handle_timezone_setting(cb)
+
+    assert existing.timezone == "Asia/Yekaterinburg"
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    assert len(kb.inline_keyboard) == 2
+    assert kb.inline_keyboard[1][0].callback_data == "settings:tz_open"
+
+
+@pytest.mark.asyncio
+async def test_handle_timezone_setting_invalid():
+    """Недопустимый часовой пояс отклоняется с show_alert."""
+    cb = _make_callback("settings:tz:Invalid/Zone")
+    session = _make_session(settings_obj=_make_user_settings())
+
+    with patch("app.bot.handlers.settings.AsyncSessionLocal", return_value=session):
+        await handle_timezone_setting(cb)
+
+    cb.message.edit_text.assert_not_called()
+    assert cb.answer.call_args.kwargs.get("show_alert") is True
 
 
 # ---------------------------------------------------------------------------
