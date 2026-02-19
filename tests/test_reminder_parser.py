@@ -13,6 +13,7 @@ import pytest
 from app.bot.handlers.reminders import (
     _expand_short_dates,
     _extract_datetime_fragments,
+    _find_dot_ambiguity,
     _has_explicit_time,
     _normalize_time,
     _parse_reminder,
@@ -72,6 +73,19 @@ class TestNormalizeTime:
     def test_no_change(self):
         assert _normalize_time("встреча завтра") == "встреча завтра"
 
+    def test_dot_time_zero_minutes(self):
+        assert _normalize_time("в 18.00") == "в 18:00"
+
+    def test_dot_time_minutes_gt12(self):
+        assert _normalize_time("в 18.30") == "в 18:30"
+
+    def test_dot_time_minutes_gt12_small_hour(self):
+        assert _normalize_time("в 8.45") == "в 8:45"
+
+    def test_dot_time_ambiguous_not_changed(self):
+        # 18.02 — неоднозначно, нормализация не трогает
+        assert _normalize_time("встреча 18.02") == "встреча 18.02"
+
 
 # ---------------------------------------------------------------------------
 # _expand_short_dates
@@ -118,6 +132,16 @@ class TestHasExplicitTime:
 
     def test_no_time_date_only(self):
         assert not _has_explicit_time("19.02 написать заявление")
+
+    def test_dot_time_zero(self):
+        assert _has_explicit_time("встреча завтра в 18.00")
+
+    def test_dot_time_minutes_gt12(self):
+        assert _has_explicit_time("встреча завтра в 18.30")
+
+    def test_dot_time_ambiguous_not_explicit(self):
+        # 18.02 — неоднозначно, не считается явным временем
+        assert not _has_explicit_time("встреча 18.02")
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +307,21 @@ class TestParseReminder:
         assert dt.month == 2
         assert dt.hour == 18
 
+    def test_dot_time_zero_minutes(self):
+        result = _parse_reminder("встреча завтра в 18.00")
+        assert result is not None
+        text, dt = result
+        assert "встреча" in text
+        assert dt.hour == 18
+        assert dt.minute == 0
+
+    def test_dot_time_minutes_gt12(self):
+        result = _parse_reminder("встреча завтра в 18.30")
+        assert result is not None
+        _, dt = result
+        assert dt.hour == 18
+        assert dt.minute == 30
+
     # --- Не должны парситься ---
 
     def test_no_date_returns_none(self):
@@ -296,6 +335,46 @@ class TestParseReminder:
         result = _parse_reminder("встреча завтра")
         assert result is not None
         assert not _has_explicit_time("встреча завтра")
+
+
+# ---------------------------------------------------------------------------
+# _find_dot_ambiguity
+# ---------------------------------------------------------------------------
+
+class TestFindDotAmbiguity:
+    def test_ambiguous_returns_tuple(self):
+        result = _find_dot_ambiguity("встреча 18.02")
+        assert result is not None
+        fragment, h, mn = result
+        assert fragment == "18.02"
+        assert h == 18
+        assert mn == 2
+
+    def test_ambiguous_small_values(self):
+        result = _find_dot_ambiguity("звонок 9.05")
+        assert result is not None
+        assert result[1] == 9
+        assert result[2] == 5
+
+    def test_safe_dot_time_not_ambiguous(self):
+        # 18.30 — безопасно, минуты > 12
+        assert _find_dot_ambiguity("встреча 18.30") is None
+
+    def test_zero_minutes_not_ambiguous(self):
+        # 18.00 — минуты 00, не может быть месяцем
+        assert _find_dot_ambiguity("встреча 18.00") is None
+
+    def test_hour_gt23_not_ambiguous(self):
+        # 30.04 — часов > 23, это дата 30 апреля
+        assert _find_dot_ambiguity("встреча 30.04") is None
+
+    def test_not_ambiguous_when_explicit_time_present(self):
+        # Рядом есть явное время → 18.02 это дата, не спрашиваем
+        assert _find_dot_ambiguity("встреча 18.02 в 10:00") is None
+
+    def test_full_date_not_ambiguous(self):
+        # 18.02.2026 — полная дата, не матчится _AMBIG_DOT_RE
+        assert _find_dot_ambiguity("дедлайн 18.02.2026") is None
 
 
 # ---------------------------------------------------------------------------
