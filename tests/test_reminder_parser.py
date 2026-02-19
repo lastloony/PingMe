@@ -240,6 +240,17 @@ class TestParseReminder:
         assert "таблетку" in text
         assert dt > datetime.now()
 
+    def test_through_hours(self):
+        from app.bot.handlers.reminders import _now as _now_msk
+        now = _now_msk()
+        result = _parse_reminder("выключить таймер через 2 часа", now=now)
+        assert result is not None
+        text, dt = result
+        assert "выключить таймер" in text
+        # через 2 часа — должно быть ~2 часа от сейчас, не 02:00 следующего дня
+        delta_hours = (dt - now).total_seconds() / 3600
+        assert 1.5 < delta_hours < 2.5, f"Ожидалось ~2 ч от сейчас, получили {dt}"
+
     def test_weekday(self):
         result = _parse_reminder("встреча в пятницу в 15:00")
         assert result is not None

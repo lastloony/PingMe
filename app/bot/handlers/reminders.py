@@ -71,7 +71,7 @@ _MORNING_RE = re.compile(r"\b(\d{1,2})\s*утра\b", flags=re.IGNORECASE)
 _NIGHT_RE   = re.compile(r"\b(\d{1,2})\s*ночи\b", flags=re.IGNORECASE)
 _EVENING_RE = re.compile(r"\b(\d{1,2})\s*(?:вечера|вечером)\b", flags=re.IGNORECASE)
 _DAY_RE     = re.compile(r"\b(\d{1,2})\s*(?:дня|днём)\b", flags=re.IGNORECASE)
-_HOUR_RE    = re.compile(r"\b(\d{1,2})\s*час(?:ов|а|ах)?\b", flags=re.IGNORECASE)
+_HOUR_RE    = re.compile(r"(?<!через )\b(\d{1,2})\s*час(?:ов|а|ах)?\b", flags=re.IGNORECASE)
 
 # Префикс «напомни [мне]» — убираем из текста напоминания
 _PREFIX_RE  = re.compile(r"^напомни(?:те)?\s*(?:мне\s*)?", flags=re.IGNORECASE)
