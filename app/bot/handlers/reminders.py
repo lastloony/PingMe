@@ -55,9 +55,10 @@ def _dateparser_settings(tz_name: str) -> dict:
     }
 
 
-# Паттерны явного времени в тексте (только HH:MM с двоеточием, не с точкой)
+# Паттерны явного времени в тексте
 _EXPLICIT_TIME_RE = re.compile(
     r"\b\d{1,2}[:-]\d{2}\b"
+    r"|\b\d{1,2}\.(?:00|[2-9]\d|1[3-9])\b"   # N.00, N.13–N.99 — безопасный точечный формат
     r"|\b\d{1,2}\s*(?:утра|вечера|вечером|ночи|дня|днём)\b"
     r"|\bчерез\s+\d"
     r"|\b\d{1,2}\s*час[а-я]*\b"
@@ -97,9 +98,14 @@ _TIME_RE = re.compile(
 )
 
 
+# N.00, N.13-N.99 — безопасная конвертация точечного формата в двоеточие
+_SAFE_DOT_TIME_RE = re.compile(r"\b(\d{1,2})\.(00|[2-9]\d|1[3-9])\b")
+# N.01-N.12 — неоднозначно (может быть датой DD.MM)
+_AMBIG_DOT_RE = re.compile(r"\b(\d{1,2})\.(0[1-9]|1[0-2])\b(?![./]\d)")
+
 _DASH_TIME_RE = re.compile(r"\b(\d{1,2})-(\d{2})\b")
 _IN_HOUR_RE   = re.compile(
-    r"\bв\s+(\d{1,2})\b(?!\s*(?:утра|вечера|вечером|ночи|дня|днём|час[а-я]*|[-:]\d))",
+    r"\bв\s+(\d{1,2})\b(?!\s*(?:утра|вечера|вечером|ночи|дня|днём|час[а-я]*|[-:.]\d))",
     flags=re.IGNORECASE,
 )
 
@@ -122,6 +128,7 @@ def _normalize_time(text: str) -> str:
     text = _EVENING_RE.sub(evening, text)
     text = _DAY_RE.sub(evening, text)
     text = _HOUR_RE.sub(morning, text)
+    text = _SAFE_DOT_TIME_RE.sub(lambda m: f"{m.group(1)}:{m.group(2)}", text)
     return text
 
 
@@ -138,6 +145,24 @@ def _expand_short_dates(text: str, year: int | None = None) -> str:
         return f"{m.group(1)}.{m.group(2)}.{year}"
 
     return _SHORT_DATE_RE.sub(expand, text)
+
+
+def _find_dot_ambiguity(text: str) -> tuple[str, int, int] | None:
+    """
+    Ищет N.MM где 1 <= MM <= 12 и N <= 23 — может быть и временем и датой.
+    Если рядом уже есть другое явное время — это дата, не спрашиваем.
+    Возвращает (фрагмент, часы, минуты) или None.
+    """
+    m = _AMBIG_DOT_RE.search(text)
+    if not m:
+        return None
+    h, mn = int(m.group(1)), int(m.group(2))
+    if h > 23:
+        return None  # не может быть временем → это дата
+    rest = text[: m.start()] + text[m.end() :]
+    if _has_explicit_time(rest):
+        return None  # рядом уже есть явное время → этот фрагмент скорее дата
+    return m.group(), h, mn
 
 
 def _shift_to_future(dt: datetime, now: datetime | None = None) -> datetime:
@@ -228,6 +253,7 @@ class ReminderStates(StatesGroup):
     waiting_for_time = State()
     waiting_for_delete_id = State()
     waiting_for_reschedule = State()
+    waiting_for_dot_clarification = State()
 
 
 @router.message(StateFilter(None), F.text, HasDateFilter())
@@ -236,8 +262,35 @@ async def remind_from_text(message: Message, state: FSMContext):
     await _handle_reminder_text(message, message.text, state)
 
 
-async def _handle_reminder_text(message: Message, raw: str, state: FSMContext):
-    user_tz = await _load_user_tz(message.from_user.id)
+async def _handle_reminder_text(
+    message: Message, raw: str, state: FSMContext, user_id: int | None = None
+):
+    uid = user_id if user_id is not None else message.from_user.id
+
+    # Проверяем неоднозначный точечный формат (18.02 — время или дата?)
+    ambiguity = _find_dot_ambiguity(_PREFIX_RE.sub("", raw.strip()))
+    if ambiguity:
+        fragment, h, mn = ambiguity
+        _MONTHS_RU = ["янв", "фев", "мар", "апр", "мая", "июн",
+                      "июл", "авг", "сен", "окт", "ноя", "дек"]
+        day = fragment.split(".")[0]
+        month_name = _MONTHS_RU[mn - 1]
+        await state.set_state(ReminderStates.waiting_for_dot_clarification)
+        await state.update_data(raw_text=raw, fragment=fragment, h=h, mn=mn, user_id=uid)
+        await message.answer(
+            f"❓ <b>{fragment}</b> — это время или дата?",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text=f"🕐 Время {h:02d}:{mn:02d}", callback_data="clarify:time"
+                ),
+                InlineKeyboardButton(
+                    text=f"📅 Дата {day} {month_name}", callback_data="clarify:date"
+                ),
+            ]]),
+        )
+        return
+
+    user_tz = await _load_user_tz(uid)
     now = _now_tz(user_tz)
     dp_s = _dateparser_settings(user_tz.zone)
     parsed = _parse_reminder(raw, dp_settings=dp_s, now=now)
@@ -276,7 +329,7 @@ async def _handle_reminder_text(message: Message, raw: str, state: FSMContext):
         )
         return
 
-    await _save_reminder(message, reminder_text, remind_at, state, user_tz)
+    await _save_reminder(message, uid, reminder_text, remind_at, state, user_tz)
 
 
 @router.message(ReminderStates.waiting_for_time, F.text)
@@ -305,11 +358,36 @@ async def handle_time_input(message: Message, state: FSMContext):
         await message.answer("❌ Это время уже в прошлом. Укажи время в будущем.")
         return
 
-    await _save_reminder(message, data["reminder_text"], dt, state, user_tz)
+    await _save_reminder(message, message.from_user.id, data["reminder_text"], dt, state, user_tz)
+
+
+@router.callback_query(
+    StateFilter(ReminderStates.waiting_for_dot_clarification),
+    F.data.in_({"clarify:time", "clarify:date"}),
+)
+async def handle_dot_clarification(callback: CallbackQuery, state: FSMContext):
+    """Пользователь уточнил: NN.MM — это время или дата."""
+    data = await state.get_data()
+    raw: str = data["raw_text"]
+    fragment: str = data["fragment"]
+    h: int = data["h"]
+    mn: int = data["mn"]
+    uid: int = data.get("user_id", callback.from_user.id)
+
+    await state.clear()
+
+    if callback.data == "clarify:time":
+        new_raw = raw.replace(fragment, f"{h:02d}:{mn:02d}", 1)
+    else:
+        new_raw = raw  # оставляем как дату
+
+    await callback.answer()
+    await _handle_reminder_text(callback.message, new_raw, state, user_id=uid)
 
 
 async def _save_reminder(
     message: Message,
+    user_id: int,
     reminder_text: str,
     remind_at: datetime,
     state: FSMContext,
@@ -317,7 +395,7 @@ async def _save_reminder(
 ):
     async with AsyncSessionLocal() as session:
         reminder = Reminder(
-            user_id=message.from_user.id,
+            user_id=user_id,
             text=reminder_text,
             remind_at=remind_at,
         )
@@ -685,7 +763,7 @@ async def handle_reschedule_input(message: Message, state: FSMContext):
     user_tz = pytz.timezone(tz_name)
     dp_s = _dateparser_settings(tz_name)
 
-    normalized = _normalize_time(_expand_short_dates(message.text.strip(), year=_now_tz(user_tz).year))
+    normalized = _expand_short_dates(_normalize_time(message.text.strip()), year=_now_tz(user_tz).year)
     dt = dateparser.parse(normalized, languages=["ru"], settings=dp_s)
 
     if dt is None or dt <= _now_tz(user_tz):
