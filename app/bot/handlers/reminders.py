@@ -130,6 +130,14 @@ _RECURRENCE_SHORT = {
     "hourly": "🔁ч", "daily": "🔁д", "weekly": "🔁н", "monthly": "🔁м", "yearly": "🔁г",
 }
 
+_RECURRENCE_EXAMPLE_KW = {
+    "hourly":  "каждый час",
+    "daily":   "каждый день",
+    "weekly":  "каждую неделю",
+    "monthly": "каждый месяц",
+    "yearly":  "каждый год",
+}
+
 
 def _extract_recurrence(raw: str) -> tuple[str, str | None]:
     """Извлекает ключевое слово периодичности, возвращает (очищенный текст, recurrence | None)."""
@@ -342,13 +350,14 @@ async def _handle_reminder_text(
     if parsed is None:
         if recurrence:
             label = _RECURRENCE_LABELS[recurrence]
+            kw = _RECURRENCE_EXAMPLE_KW[recurrence]
             hint = raw.strip() or "текст"
             await message.answer(
                 f"🔁 Повторяемость распознана: <b>{label}</b>\n\n"
                 f"❌ Не указано начальное время.\n\n"
                 f"Добавь когда начать, например:\n"
-                f"• <i>{hint} завтра в 10:00</i>\n"
-                f"• <i>{hint} в 8 утра</i>"
+                f"• <i>{hint} завтра в 10:00 {kw}</i>\n"
+                f"• <i>{hint} в 8 утра {kw}</i>"
             )
         else:
             await message.answer(
