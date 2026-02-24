@@ -277,9 +277,14 @@ async def _load_user_tz(user_id: int) -> pytz.BaseTzInfo:
 
 
 class HasDateFilter(BaseFilter):
-    """Пропускает сообщение только если в тексте найдена дата/время."""
+    """Пропускает сообщение если найдена дата/время или ключевое слово периодичности."""
     async def __call__(self, message: Message) -> bool:
-        return bool(message.text) and _parse_reminder(message.text) is not None
+        if not message.text:
+            return False
+        _, recurrence = _extract_recurrence(message.text)
+        if recurrence:
+            return True
+        return _parse_reminder(message.text) is not None
 
 
 class ReminderStates(StatesGroup):
