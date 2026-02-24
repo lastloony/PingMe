@@ -17,7 +17,7 @@ from app.bot.bot import dp
 from app.config import settings
 from app.database import Reminder, UserSettings
 from app.database.base import AsyncSessionLocal
-from app.services.scheduler import schedule_reminder, scheduler, send_reminder
+from app.services.scheduler import _next_occurrence, schedule_reminder, scheduler, send_reminder
 
 router = Router()
 
@@ -108,6 +108,47 @@ _IN_HOUR_RE   = re.compile(
     r"\bв\s+(\d{1,2})\b(?!\s*(?:утра|вечера|вечером|ночи|дня|днём|час[а-я]*|[-:.]\d))",
     flags=re.IGNORECASE,
 )
+
+
+_RECURRENCE_PATTERNS: dict[str, list[str]] = {
+    "yearly":  [r"ежегодно", r"каждый\s+год", r"каждое\s+\d+\s+\w+"],
+    "monthly": [r"ежемесячно", r"каждый\s+месяц", r"каждое\s+\d+[- ]?числа?"],
+    "weekly":  [r"еженедельно", r"каждую\s+неделю", r"каждые\s+7\s+дней"],
+    "daily":   [r"ежедневно", r"каждый\s+день", r"каждые\s+сутки"],
+    "hourly":  [r"ежечасно", r"каждый\s+час", r"каждые\s+60\s+минут"],
+}
+
+_RECURRENCE_LABELS = {
+    "hourly":  "ежечасно",
+    "daily":   "ежедневно",
+    "weekly":  "еженедельно",
+    "monthly": "ежемесячно",
+    "yearly":  "ежегодно",
+}
+
+_RECURRENCE_SHORT = {
+    "hourly": "🔁ч", "daily": "🔁д", "weekly": "🔁н", "monthly": "🔁м", "yearly": "🔁г",
+}
+
+_RECURRENCE_EXAMPLE_KW = {
+    "hourly":  "каждый час",
+    "daily":   "каждый день",
+    "weekly":  "каждую неделю",
+    "monthly": "каждый месяц",
+    "yearly":  "каждый год",
+}
+
+
+def _extract_recurrence(raw: str) -> tuple[str, str | None]:
+    """Извлекает ключевое слово периодичности, возвращает (очищенный текст, recurrence | None)."""
+    for recurrence, patterns in _RECURRENCE_PATTERNS.items():
+        for pat in patterns:
+            m = re.search(pat, raw, re.IGNORECASE)
+            if m:
+                cleaned = raw[:m.start()] + raw[m.end():]
+                cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,–—")
+                return cleaned, recurrence
+    return raw, None
 
 
 def _normalize_time(text: str) -> str:
@@ -244,9 +285,14 @@ async def _load_user_tz(user_id: int) -> pytz.BaseTzInfo:
 
 
 class HasDateFilter(BaseFilter):
-    """Пропускает сообщение только если в тексте найдена дата/время."""
+    """Пропускает сообщение если найдена дата/время или ключевое слово периодичности."""
     async def __call__(self, message: Message) -> bool:
-        return bool(message.text) and _parse_reminder(message.text) is not None
+        if not message.text:
+            return False
+        _, recurrence = _extract_recurrence(message.text)
+        if recurrence:
+            return True
+        return _parse_reminder(message.text) is not None
 
 
 class ReminderStates(StatesGroup):
@@ -263,9 +309,13 @@ async def remind_from_text(message: Message, state: FSMContext):
 
 
 async def _handle_reminder_text(
-    message: Message, raw: str, state: FSMContext, user_id: int | None = None
+    message: Message, raw: str, state: FSMContext, user_id: int | None = None,
+    recurrence: str | None = None,
 ):
     uid = user_id if user_id is not None else message.from_user.id
+
+    if recurrence is None:
+        raw, recurrence = _extract_recurrence(raw)
 
     # Проверяем неоднозначный точечный формат (18.02 — время или дата?)
     ambiguity = _find_dot_ambiguity(_PREFIX_RE.sub("", raw.strip()))
@@ -276,7 +326,9 @@ async def _handle_reminder_text(
         day = fragment.split(".")[0]
         month_name = _MONTHS_RU[mn - 1]
         await state.set_state(ReminderStates.waiting_for_dot_clarification)
-        await state.update_data(raw_text=raw, fragment=fragment, h=h, mn=mn, user_id=uid)
+        await state.update_data(
+            raw_text=raw, fragment=fragment, h=h, mn=mn, user_id=uid, recurrence=recurrence,
+        )
         await message.answer(
             f"❓ <b>{fragment}</b> — это время или дата?",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
@@ -296,13 +348,25 @@ async def _handle_reminder_text(
     parsed = _parse_reminder(raw, dp_settings=dp_s, now=now)
 
     if parsed is None:
-        await message.answer(
-            "❌ Не смог распознать дату или время.\n\n"
-            "Формат: <b>текст дата время</b>\n"
-            "• <i>позвонить маме завтра в 10:00</i>\n"
-            "• <i>подъем 17.02 в 5 утра</i>\n"
-            "• <i>встреча в пятницу в 15:00</i>"
-        )
+        if recurrence:
+            label = _RECURRENCE_LABELS[recurrence]
+            kw = _RECURRENCE_EXAMPLE_KW[recurrence]
+            hint = raw.strip() or "текст"
+            await message.answer(
+                f"🔁 Повторяемость распознана: <b>{label}</b>\n\n"
+                f"❌ Не указано начальное время.\n\n"
+                f"Добавь когда начать, например:\n"
+                f"• <i>{hint} завтра в 10:00 {kw}</i>\n"
+                f"• <i>{hint} в 8 утра {kw}</i>"
+            )
+        else:
+            await message.answer(
+                "❌ Не смог распознать дату или время.\n\n"
+                "Формат: <b>текст дата время</b>\n"
+                "• <i>позвонить маме завтра в 10:00</i>\n"
+                "• <i>подъем 17.02 в 5 утра</i>\n"
+                "• <i>встреча в пятницу в 15:00</i>"
+            )
         return
 
     reminder_text, remind_at = parsed
@@ -313,6 +377,7 @@ async def _handle_reminder_text(
             reminder_text=reminder_text,
             remind_date=remind_at.strftime("%d.%m.%Y"),
             tz_name=user_tz.zone,
+            recurrence=recurrence,
         )
         await message.answer(
             f"📅 Дата: <b>{remind_at.strftime('%d.%m.%Y')}</b>\n"
@@ -329,7 +394,7 @@ async def _handle_reminder_text(
         )
         return
 
-    await _save_reminder(message, uid, reminder_text, remind_at, state, user_tz)
+    await _save_reminder(message, uid, reminder_text, remind_at, state, user_tz, recurrence=recurrence)
 
 
 @router.message(ReminderStates.waiting_for_time, F.text)
@@ -358,7 +423,11 @@ async def handle_time_input(message: Message, state: FSMContext):
         await message.answer("❌ Это время уже в прошлом. Укажи время в будущем.")
         return
 
-    await _save_reminder(message, message.from_user.id, data["reminder_text"], dt, state, user_tz)
+    recurrence = data.get("recurrence")
+    await _save_reminder(
+        message, message.from_user.id, data["reminder_text"], dt, state, user_tz,
+        recurrence=recurrence,
+    )
 
 
 @router.callback_query(
@@ -374,6 +443,7 @@ async def handle_dot_clarification(callback: CallbackQuery, state: FSMContext):
     mn: int = data["mn"]
     uid: int = data.get("user_id", callback.from_user.id)
 
+    recurrence = data.get("recurrence")
     await state.clear()
 
     if callback.data == "clarify:time":
@@ -382,7 +452,7 @@ async def handle_dot_clarification(callback: CallbackQuery, state: FSMContext):
         new_raw = raw  # оставляем как дату
 
     await callback.answer()
-    await _handle_reminder_text(callback.message, new_raw, state, user_id=uid)
+    await _handle_reminder_text(callback.message, new_raw, state, user_id=uid, recurrence=recurrence)
 
 
 async def _save_reminder(
@@ -392,12 +462,15 @@ async def _save_reminder(
     remind_at: datetime,
     state: FSMContext,
     user_tz: pytz.BaseTzInfo,
+    recurrence: str | None = None,
 ):
     async with AsyncSessionLocal() as session:
         reminder = Reminder(
             user_id=user_id,
             text=reminder_text,
             remind_at=remind_at,
+            recurrence=recurrence,
+            recurrence_anchor=remind_at if recurrence else None,
         )
         session.add(reminder)
         await session.commit()
@@ -405,10 +478,12 @@ async def _save_reminder(
         schedule_reminder(reminder, tz=user_tz)
 
     await state.clear()
+    rec_line = f"\n🔁 Повторяется: {_RECURRENCE_LABELS[recurrence]}" if recurrence else ""
     await message.answer(
         f"✅ Напоминание создано!\n\n"
         f"📝 {reminder_text}\n"
         f"⏰ {remind_at.strftime('%d.%m.%Y %H:%M')}"
+        f"{rec_line}"
     )
 
 
@@ -434,9 +509,10 @@ def _build_table(reminders) -> str:
     for r in reminders:
         text = r.text[:COL_TEXT] + "…" if len(r.text) > COL_TEXT else r.text
         flag = " ⏱" if r.is_snoozed else ""
+        rec_flag = f" {_RECURRENCE_SHORT.get(r.recurrence, '')}" if r.recurrence else ""
         rows.append(
             f"{r.id:<4} {r.remind_at.strftime('%d.%m.%Y'):<11} "
-            f"{r.remind_at.strftime('%H:%M'):<6} {text}{flag}"
+            f"{r.remind_at.strftime('%H:%M'):<6} {text}{flag}{rec_flag}"
         )
     return "<pre>" + "\n".join(rows) + "</pre>"
 
@@ -646,13 +722,34 @@ async def handle_reminder_callback(callback: CallbackQuery):
             return
 
         if action == "done":
-            reminder.is_confirmed = True
-            reminder.is_active = False
-            await session.commit()
-            _cancel_reminder_job(reminder_id)
-            await callback.message.edit_text(
-                f"⏰ <b>Напоминание!</b>\n\n{reminder.text}\n\n✅ <i>Выполнено</i>"
-            )
+            if reminder.recurrence:
+                us_result = await session.execute(
+                    select(UserSettings).where(UserSettings.user_id == callback.from_user.id)
+                )
+                us = us_result.scalar_one_or_none()
+                user_tz = pytz.timezone(us.timezone if us else settings.timezone)
+                anchor = reminder.recurrence_anchor or reminder.remind_at
+                next_dt = _next_occurrence(anchor, reminder.recurrence)
+                reminder.remind_at = next_dt
+                reminder.recurrence_anchor = next_dt
+                reminder.is_snoozed = False
+                reminder.message_id = None
+                await session.commit()
+                _cancel_reminder_job(reminder_id)
+                schedule_reminder(reminder, tz=user_tz)
+                await callback.message.edit_text(
+                    f"⏰ <b>Напоминание!</b>\n\n{reminder.text}\n\n"
+                    f"✅ <i>Выполнено!</i>\n"
+                    f"🔁 Следующее: <b>{next_dt.strftime('%d.%m.%Y %H:%M')}</b>"
+                )
+            else:
+                reminder.is_confirmed = True
+                reminder.is_active = False
+                await session.commit()
+                _cancel_reminder_job(reminder_id)
+                await callback.message.edit_text(
+                    f"⏰ <b>Напоминание!</b>\n\n{reminder.text}\n\n✅ <i>Выполнено</i>"
+                )
 
         elif action == "snooze":
             us_result = await session.execute(

@@ -17,57 +17,30 @@ from app.services.scheduler import _build_keyboard, send_reminder
 # ---------------------------------------------------------------------------
 
 class TestBuildKeyboard:
-    def test_has_two_rows(self):
+    def test_layout(self):
         kb = _build_keyboard(42)
         assert len(kb.inline_keyboard) == 2
-
-    def test_each_row_has_two_buttons(self):
-        kb = _build_keyboard(42)
         assert len(kb.inline_keyboard[0]) == 2
         assert len(kb.inline_keyboard[1]) == 2
 
-    def test_done_callback(self):
-        kb = _build_keyboard(7)
-        done_btn = kb.inline_keyboard[0][0]
-        assert done_btn.callback_data == "rem:done:7"
-        assert "Выполнено" in done_btn.text
-
-    def test_snooze_callback(self):
-        kb = _build_keyboard(7)
-        snooze_btn = kb.inline_keyboard[0][1]
-        assert snooze_btn.callback_data == "rem:snooze:7"
-        assert "+1 час" in snooze_btn.text
-
-    def test_snooze_day_callback(self):
-        kb = _build_keyboard(7)
-        btn = kb.inline_keyboard[1][0]
-        assert btn.callback_data == "rem:snooze_day:7"
-        assert "+1 день" in btn.text
-
-    def test_reschedule_callback(self):
-        kb = _build_keyboard(7)
-        btn = kb.inline_keyboard[1][1]
-        assert btn.callback_data == "rem:reschedule:7"
-        assert "Перенести" in btn.text
-
-    def test_different_ids(self):
-        kb1 = _build_keyboard(1)
-        kb2 = _build_keyboard(99)
-        assert "1" in kb1.inline_keyboard[0][0].callback_data
-        assert "99" in kb2.inline_keyboard[0][0].callback_data
+    @pytest.mark.parametrize("reminder_id,row,col,expected_data,expected_text", [
+        (7, 0, 0, "rem:done:7",        "Выполнено"),
+        (7, 0, 1, "rem:snooze:7",      "+1 час"),
+        (7, 1, 0, "rem:snooze_day:7",  "+1 день"),
+        (7, 1, 1, "rem:reschedule:7",  "Перенести"),
+    ])
+    def test_buttons(self, reminder_id, row, col, expected_data, expected_text):
+        kb = _build_keyboard(reminder_id)
+        btn = kb.inline_keyboard[row][col]
+        assert btn.callback_data == expected_data
+        assert expected_text in btn.text
 
 
 # ---------------------------------------------------------------------------
 # send_reminder
 # ---------------------------------------------------------------------------
 
-def _make_reminder(
-    id=1,
-    user_id=100,
-    text="купить хлеб",
-    is_active=True,
-    is_confirmed=False,
-):
+def _make_reminder(id=1, user_id=100, text="купить хлеб", is_active=True, is_confirmed=False):
     r = MagicMock()
     r.id = id
     r.user_id = user_id
@@ -79,107 +52,65 @@ def _make_reminder(
     return r
 
 
-def _add_execute_no_settings(mock_session):
-    """Добавляет мок session.execute() → нет UserSettings (fallback на дефолт)."""
+def _make_session(reminder):
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=reminder)
+    session.commit = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
     mock_result = MagicMock()
     mock_result.scalar_one_or_none.return_value = None
-    mock_session.execute = AsyncMock(return_value=mock_result)
+    session.execute = AsyncMock(return_value=mock_result)
+    return session
 
 
 @pytest.mark.asyncio
-async def test_send_reminder_skips_confirmed():
-    """Не отправляет если is_confirmed=True."""
-    reminder = _make_reminder(is_confirmed=True)
+@pytest.mark.parametrize("reminder_obj,label", [
+    (_make_reminder(is_confirmed=True), "confirmed"),
+    (_make_reminder(is_active=False),   "inactive"),
+    (None,                               "not_found"),
+])
+async def test_send_reminder_skips(reminder_obj, label):
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=reminder_obj)
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
 
-    mock_session = AsyncMock()
-    mock_session.get = AsyncMock(return_value=reminder)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
-
-    with patch("app.services.scheduler.AsyncSessionLocal", return_value=mock_session), \
+    with patch("app.services.scheduler.AsyncSessionLocal", return_value=session), \
          patch("app.services.scheduler.bot") as mock_bot:
         await send_reminder(1)
-        mock_bot.send_message.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_send_reminder_skips_inactive():
-    """Не отправляет если is_active=False."""
-    reminder = _make_reminder(is_active=False)
-
-    mock_session = AsyncMock()
-    mock_session.get = AsyncMock(return_value=reminder)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
-
-    with patch("app.services.scheduler.AsyncSessionLocal", return_value=mock_session), \
-         patch("app.services.scheduler.bot") as mock_bot:
-        await send_reminder(1)
-        mock_bot.send_message.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_send_reminder_skips_missing():
-    """Не падает если напоминание не найдено в БД."""
-    mock_session = AsyncMock()
-    mock_session.get = AsyncMock(return_value=None)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
-
-    with patch("app.services.scheduler.AsyncSessionLocal", return_value=mock_session), \
-         patch("app.services.scheduler.bot") as mock_bot:
-        await send_reminder(999)
         mock_bot.send_message.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_send_reminder_sends_with_keyboard():
-    """Отправляет сообщение с inline-клавиатурой."""
     reminder = _make_reminder(id=5, user_id=777, text="позвонить маме")
-
     mock_msg = MagicMock()
     mock_msg.message_id = 999
+    session = _make_session(reminder)
 
-    mock_session = AsyncMock()
-    mock_session.get = AsyncMock(return_value=reminder)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
-    _add_execute_no_settings(mock_session)
-
-    mock_scheduler = MagicMock()
-
-    with patch("app.services.scheduler.AsyncSessionLocal", return_value=mock_session), \
+    with patch("app.services.scheduler.AsyncSessionLocal", return_value=session), \
          patch("app.services.scheduler.bot") as mock_bot, \
-         patch("app.services.scheduler.scheduler", mock_scheduler):
+         patch("app.services.scheduler.scheduler"):
         mock_bot.send_message = AsyncMock(return_value=mock_msg)
         await send_reminder(5)
 
-    mock_bot.send_message.assert_called_once()
-    call_kwargs = mock_bot.send_message.call_args
-    assert call_kwargs.kwargs["chat_id"] == 777
-    assert "позвонить маме" in call_kwargs.kwargs["text"]
-    assert call_kwargs.kwargs["reply_markup"] is not None
+    call_kwargs = mock_bot.send_message.call_args.kwargs
+    assert call_kwargs["chat_id"] == 777
+    assert "позвонить маме" in call_kwargs["text"]
+    assert call_kwargs["reply_markup"] is not None
 
 
 @pytest.mark.asyncio
 async def test_send_reminder_saves_message_id():
-    """Сохраняет message_id в напоминании."""
     reminder = _make_reminder(id=5)
-
     mock_msg = MagicMock()
     mock_msg.message_id = 123
+    session = _make_session(reminder)
 
-    mock_session = AsyncMock()
-    mock_session.get = AsyncMock(return_value=reminder)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
-    _add_execute_no_settings(mock_session)
-
-    mock_scheduler = MagicMock()
-
-    with patch("app.services.scheduler.AsyncSessionLocal", return_value=mock_session), \
+    with patch("app.services.scheduler.AsyncSessionLocal", return_value=session), \
          patch("app.services.scheduler.bot") as mock_bot, \
-         patch("app.services.scheduler.scheduler", mock_scheduler):
+         patch("app.services.scheduler.scheduler"):
         mock_bot.send_message = AsyncMock(return_value=mock_msg)
         await send_reminder(5)
 
@@ -187,92 +118,33 @@ async def test_send_reminder_saves_message_id():
 
 
 @pytest.mark.asyncio
-async def test_send_reminder_schedules_repeat():
-    """Планирует повтор через 15 минут после отправки."""
-    reminder = _make_reminder(id=10)
-
-    mock_msg = MagicMock()
-    mock_msg.message_id = 1
-
-    mock_session = AsyncMock()
-    mock_session.get = AsyncMock(return_value=reminder)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
-    _add_execute_no_settings(mock_session)
-
-    mock_scheduler = MagicMock()
-
-    with patch("app.services.scheduler.AsyncSessionLocal", return_value=mock_session), \
-         patch("app.services.scheduler.bot") as mock_bot, \
-         patch("app.services.scheduler.scheduler", mock_scheduler):
-        mock_bot.send_message = AsyncMock(return_value=mock_msg)
-        await send_reminder(10)
-
-    mock_scheduler.add_job.assert_called_once()
-    call_kwargs = mock_scheduler.add_job.call_args
-    assert call_kwargs.kwargs.get("id") == "reminder_10" or call_kwargs.args[0] is not None
-
-
-@pytest.mark.asyncio
-async def test_send_reminder_repeat_job_id():
-    """Job повтора имеет правильный ID (reminder_<id>)."""
-    reminder = _make_reminder(id=42)
-
-    mock_msg = MagicMock()
-    mock_msg.message_id = 1
-
-    mock_session = AsyncMock()
-    mock_session.get = AsyncMock(return_value=reminder)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
-    _add_execute_no_settings(mock_session)
-
-    mock_scheduler = MagicMock()
-
-    with patch("app.services.scheduler.AsyncSessionLocal", return_value=mock_session), \
-         patch("app.services.scheduler.bot") as mock_bot, \
-         patch("app.services.scheduler.scheduler", mock_scheduler):
-        mock_bot.send_message = AsyncMock(return_value=mock_msg)
-        await send_reminder(42)
-
-    call_kwargs = mock_scheduler.add_job.call_args
-    assert call_kwargs.kwargs["id"] == "reminder_42"
-
-
-@pytest.mark.asyncio
-async def test_send_reminder_repeat_within_15_minutes():
-    """Повтор запланирован примерно через 15 минут."""
+async def test_send_reminder_schedules_repeat_job():
+    """Планирует повтор с правильным job ID и временем ~15 мин."""
     from apscheduler.triggers.date import DateTrigger
 
-    reminder = _make_reminder(id=3)
-
+    reminder = _make_reminder(id=10)
     mock_msg = MagicMock()
     mock_msg.message_id = 1
+    session = _make_session(reminder)
 
-    mock_session = AsyncMock()
-    mock_session.get = AsyncMock(return_value=reminder)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
-    _add_execute_no_settings(mock_session)
+    captured = {}
 
-    captured_trigger = {}
-
-    def capture_add_job(func, trigger, **kwargs):
-        captured_trigger["trigger"] = trigger
+    def capture(func, trigger, **kwargs):
+        captured["id"] = kwargs.get("id")
+        captured["trigger"] = trigger
 
     mock_scheduler = MagicMock()
-    mock_scheduler.add_job.side_effect = capture_add_job
+    mock_scheduler.add_job.side_effect = capture
 
     fixed_now = datetime.now()
-    with patch("app.services.scheduler.AsyncSessionLocal", return_value=mock_session), \
+    with patch("app.services.scheduler.AsyncSessionLocal", return_value=session), \
          patch("app.services.scheduler.bot") as mock_bot, \
          patch("app.services.scheduler.scheduler", mock_scheduler), \
          patch("app.services.scheduler.REMINDER_REPEAT_MINUTES", 15), \
          patch("app.services.scheduler._now_tz", side_effect=lambda tz: fixed_now):
         mock_bot.send_message = AsyncMock(return_value=mock_msg)
-        await send_reminder(3)
+        await send_reminder(10)
 
-    trigger = captured_trigger["trigger"]
-    assert isinstance(trigger, DateTrigger)
-    run_date = trigger.run_date.replace(tzinfo=None)
-    assert run_date == fixed_now + timedelta(minutes=15)
+    assert captured["id"] == "reminder_10"
+    assert isinstance(captured["trigger"], DateTrigger)
+    assert captured["trigger"].run_date.replace(tzinfo=None) == fixed_now + timedelta(minutes=15)

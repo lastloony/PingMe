@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timedelta
 
 import pytz
+from dateutil.relativedelta import relativedelta
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
@@ -89,6 +90,21 @@ async def send_reminder(reminder_id: int):
             logger.error(f"Ошибка при отправке напоминания {reminder_id}: {e}")
 
 
+def _next_occurrence(remind_at: datetime, recurrence: str) -> datetime:
+    """Возвращает следующий datetime для периодического напоминания."""
+    if recurrence == "hourly":
+        return remind_at + timedelta(hours=1)
+    elif recurrence == "daily":
+        return remind_at + timedelta(days=1)
+    elif recurrence == "weekly":
+        return remind_at + timedelta(weeks=1)
+    elif recurrence == "monthly":
+        return remind_at + relativedelta(months=1)
+    elif recurrence == "yearly":
+        return remind_at + relativedelta(years=1)
+    raise ValueError(f"Unknown recurrence: {recurrence}")
+
+
 def schedule_reminder(reminder: Reminder, tz: pytz.BaseTzInfo | None = None):
     """Добавляет одноразовый job для конкретного напоминания"""
     job_tz = tz if tz is not None else _TZ
@@ -132,13 +148,27 @@ async def load_pending_reminders():
         user_tz = tz_map.get(reminder.user_id, _TZ)
         now = _now_tz(user_tz)
         if reminder.remind_at <= now:
-            scheduler.add_job(
-                send_reminder,
-                trigger=DateTrigger(timezone=user_tz, run_date=now),
-                args=[reminder.id],
-                id=f"reminder_{reminder.id}",
-                replace_existing=True,
-            )
+            if reminder.recurrence:
+                anchor = reminder.recurrence_anchor or reminder.remind_at
+                next_dt = anchor
+                while next_dt <= now:
+                    next_dt = _next_occurrence(next_dt, reminder.recurrence)
+                async with AsyncSessionLocal() as update_session:
+                    r = await update_session.get(Reminder, reminder.id)
+                    if r:
+                        r.remind_at = next_dt
+                        r.recurrence_anchor = next_dt
+                        await update_session.commit()
+                reminder.remind_at = next_dt
+                schedule_reminder(reminder, tz=user_tz)
+            else:
+                scheduler.add_job(
+                    send_reminder,
+                    trigger=DateTrigger(timezone=user_tz, run_date=now),
+                    args=[reminder.id],
+                    id=f"reminder_{reminder.id}",
+                    replace_existing=True,
+                )
             overdue += 1
         else:
             schedule_reminder(reminder, tz=user_tz)

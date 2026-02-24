@@ -41,6 +41,8 @@ class Reminder(Base):
     is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     is_snoozed: Mapped[bool] = mapped_column(Boolean, default=False)
     message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    recurrence: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    recurrence_anchor: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

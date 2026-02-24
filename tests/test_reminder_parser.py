@@ -259,7 +259,8 @@ class TestParseReminder:
         assert dt > datetime.now()
 
     def test_full_date(self):
-        result = _parse_reminder("дедлайн 20.02.2026 в 18:00")
+        now = datetime(2026, 2, 19, 12, 0)
+        result = _parse_reminder("дедлайн 20.02.2026 в 18:00", now=now)
         assert result is not None
         _, dt = result
         assert dt.day == 20
