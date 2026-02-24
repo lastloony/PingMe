@@ -39,6 +39,7 @@ def _make_reminder(
     r.is_snoozed = is_snoozed
     r.remind_at = remind_at or datetime.now() + timedelta(hours=1)
     r.message_id = None
+    r.recurrence = None
     return r
 
 
