@@ -115,9 +115,11 @@ _RECURRENCE_PATTERNS: dict[str, list[str]] = {
     "monthly": [r"ежемесячно", r"каждый\s+месяц", r"каждое\s+\d+[- ]?числа?"],
     "weekly":  [r"еженедельно", r"каждую\s+неделю", r"каждые\s+7\s+дней"],
     "daily":   [r"ежедневно", r"каждый\s+день", r"каждые\s+сутки"],
+    "hourly":  [r"ежечасно", r"каждый\s+час", r"каждые\s+60\s+минут"],
 }
 
 _RECURRENCE_LABELS = {
+    "hourly":  "ежечасно",
     "daily":   "ежедневно",
     "weekly":  "еженедельно",
     "monthly": "ежемесячно",
@@ -125,7 +127,7 @@ _RECURRENCE_LABELS = {
 }
 
 _RECURRENCE_SHORT = {
-    "daily": "🔁д", "weekly": "🔁н", "monthly": "🔁м", "yearly": "🔁г",
+    "hourly": "🔁ч", "daily": "🔁д", "weekly": "🔁н", "monthly": "🔁м", "yearly": "🔁г",
 }
 
 
@@ -443,6 +445,7 @@ async def _save_reminder(
             text=reminder_text,
             remind_at=remind_at,
             recurrence=recurrence,
+            recurrence_anchor=remind_at if recurrence else None,
         )
         session.add(reminder)
         await session.commit()
@@ -700,8 +703,10 @@ async def handle_reminder_callback(callback: CallbackQuery):
                 )
                 us = us_result.scalar_one_or_none()
                 user_tz = pytz.timezone(us.timezone if us else settings.timezone)
-                next_dt = _next_occurrence(reminder.remind_at, reminder.recurrence)
+                anchor = reminder.recurrence_anchor or reminder.remind_at
+                next_dt = _next_occurrence(anchor, reminder.recurrence)
                 reminder.remind_at = next_dt
+                reminder.recurrence_anchor = next_dt
                 reminder.is_snoozed = False
                 reminder.message_id = None
                 await session.commit()

@@ -92,7 +92,9 @@ async def send_reminder(reminder_id: int):
 
 def _next_occurrence(remind_at: datetime, recurrence: str) -> datetime:
     """Возвращает следующий datetime для периодического напоминания."""
-    if recurrence == "daily":
+    if recurrence == "hourly":
+        return remind_at + timedelta(hours=1)
+    elif recurrence == "daily":
         return remind_at + timedelta(days=1)
     elif recurrence == "weekly":
         return remind_at + timedelta(weeks=1)
@@ -147,13 +149,15 @@ async def load_pending_reminders():
         now = _now_tz(user_tz)
         if reminder.remind_at <= now:
             if reminder.recurrence:
-                next_dt = reminder.remind_at
+                anchor = reminder.recurrence_anchor or reminder.remind_at
+                next_dt = anchor
                 while next_dt <= now:
                     next_dt = _next_occurrence(next_dt, reminder.recurrence)
                 async with AsyncSessionLocal() as update_session:
                     r = await update_session.get(Reminder, reminder.id)
                     if r:
                         r.remind_at = next_dt
+                        r.recurrence_anchor = next_dt
                         await update_session.commit()
                 reminder.remind_at = next_dt
                 schedule_reminder(reminder, tz=user_tz)
