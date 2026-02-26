@@ -49,6 +49,7 @@ def _make_reminder(id=1, user_id=100, text="купить хлеб", is_active=Tr
     r.is_confirmed = is_confirmed
     r.is_snoozed = False
     r.message_id = None
+    r.recurrence = None
     return r
 
 
