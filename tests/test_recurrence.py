@@ -52,25 +52,22 @@ class TestNextOccurrence:
 # ---------------------------------------------------------------------------
 
 class TestExtractRecurrence:
-    def test_hourly(self):
-        _, rec = _extract_recurrence("проверять сервер каждый час")
-        assert rec == "hourly"
-
-    def test_daily(self):
-        _, rec = _extract_recurrence("зарядка каждый день в 7:00")
-        assert rec == "daily"
-
-    def test_weekly(self):
-        _, rec = _extract_recurrence("отчёт в 18:00 еженедельно")
-        assert rec == "weekly"
-
-    def test_monthly(self):
-        _, rec = _extract_recurrence("оплата каждый месяц 1 числа")
-        assert rec == "monthly"
-
-    def test_yearly(self):
-        _, rec = _extract_recurrence("заплатить налог 20 ноября в 10:00 ежегодно")
-        assert rec == "yearly"
+    @pytest.mark.parametrize("text,expected", [
+        ("проверять сервер каждый час",          "hourly"),
+        ("тест раз в час",                       "hourly"),
+        ("зарядка каждый день в 7:00",           "daily"),
+        ("тест раз в день",                      "daily"),
+        ("тест раз в сутки",                     "daily"),
+        ("отчёт в 18:00 еженедельно",            "weekly"),
+        ("тест раз в неделю",                    "weekly"),
+        ("оплата каждый месяц 1 числа",          "monthly"),
+        ("тест раз в месяц",                     "monthly"),
+        ("заплатить налог 20 ноября ежегодно",   "yearly"),
+        ("тест раз в год",                       "yearly"),
+    ])
+    def test_patterns(self, text, expected):
+        _, rec = _extract_recurrence(text)
+        assert rec == expected
 
     def test_no_recurrence(self):
         text, rec = _extract_recurrence("позвонить маме завтра в 10:00")
