@@ -111,32 +111,50 @@ _IN_HOUR_RE   = re.compile(
 
 
 _RECURRENCE_PATTERNS: dict[str, list[str]] = {
-    "yearly":  [r"ежегодно", r"каждый\s+год", r"раз\s+в\s+год", r"каждое\s+\d+\s+\w+"],
-    "monthly": [r"ежемесячно", r"каждый\s+месяц", r"раз\s+в\s+месяц", r"каждое\s+\d+[- ]?числа?"],
-    "weekly":  [r"еженедельно", r"каждую\s+неделю", r"раз\s+в\s+неделю", r"каждые\s+7\s+дней"],
-    "daily":   [r"ежедневно", r"каждый\s+день", r"раз\s+в\s+день", r"каждые\s+сутки", r"раз\s+в\s+сутки"],
-    "hourly":  [r"ежечасно", r"каждый\s+час", r"раз\s+в\s+час", r"каждые\s+60\s+минут"],
+    "yearly":   [r"ежегодно", r"каждый\s+год", r"раз\s+в\s+год", r"каждое\s+\d+\s+\w+"],
+    "monthly":  [r"ежемесячно", r"каждый\s+месяц", r"раз\s+в\s+месяц", r"каждое\s+\d+[- ]?числа?"],
+    "weekly":   [r"еженедельно", r"каждую\s+неделю", r"раз\s+в\s+неделю", r"каждые\s+7\s+дней"],
+    "weekdays": [r"по\s+будням", r"в\s+будни(?:е\s+дни)?", r"каждый\s+будний\s+день", r"только\s+в\s+будни"],
+    "weekends": [r"по\s+выходным", r"в\s+выходные(?:\s+дни)?", r"каждые\s+выходные", r"только\s+в\s+выходные"],
+    "daily":    [r"ежедневно", r"каждый\s+день", r"раз\s+в\s+день", r"каждые\s+сутки", r"раз\s+в\s+сутки"],
+    "hourly":   [r"ежечасно", r"каждый\s+час", r"раз\s+в\s+час", r"каждые\s+60\s+минут"],
 }
 
 _RECURRENCE_LABELS = {
-    "hourly":  "ежечасно",
-    "daily":   "ежедневно",
-    "weekly":  "еженедельно",
-    "monthly": "ежемесячно",
-    "yearly":  "ежегодно",
+    "hourly":   "ежечасно",
+    "daily":    "ежедневно",
+    "weekly":   "еженедельно",
+    "monthly":  "ежемесячно",
+    "yearly":   "ежегодно",
+    "weekdays": "по будням (пн–пт)",
+    "weekends": "по выходным (сб–вс)",
 }
 
 _RECURRENCE_SHORT = {
     "hourly": "🔁ч", "daily": "🔁д", "weekly": "🔁н", "monthly": "🔁м", "yearly": "🔁г",
+    "weekdays": "🔁пн-пт", "weekends": "🔁сб-вс",
 }
 
 _RECURRENCE_EXAMPLE_KW = {
-    "hourly":  "каждый час",
-    "daily":   "каждый день",
-    "weekly":  "каждую неделю",
-    "monthly": "каждый месяц",
-    "yearly":  "каждый год",
+    "hourly":   "каждый час",
+    "daily":    "каждый день",
+    "weekly":   "каждую неделю",
+    "monthly":  "каждый месяц",
+    "yearly":   "каждый год",
+    "weekdays": "по будням",
+    "weekends": "по выходным",
 }
+
+
+def _adjust_to_day_filter(dt: datetime, recurrence: str) -> datetime:
+    """Сдвигает datetime на ближайший подходящий день для weekdays/weekends."""
+    if recurrence == "weekdays":
+        while dt.weekday() > 4:  # 5=сб, 6=вс
+            dt += timedelta(days=1)
+    elif recurrence == "weekends":
+        while dt.weekday() < 5:  # 0=пн … 4=пт
+            dt += timedelta(days=1)
+    return dt
 
 
 def _extract_recurrence(raw: str) -> tuple[str, str | None]:
@@ -464,6 +482,9 @@ async def _save_reminder(
     user_tz: pytz.BaseTzInfo,
     recurrence: str | None = None,
 ):
+    if recurrence in ("weekdays", "weekends"):
+        remind_at = _adjust_to_day_filter(remind_at, recurrence)
+
     async with AsyncSessionLocal() as session:
         reminder = Reminder(
             user_id=user_id,

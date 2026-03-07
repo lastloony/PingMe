@@ -102,6 +102,16 @@ def _next_occurrence(remind_at: datetime, recurrence: str) -> datetime:
         return remind_at + relativedelta(months=1)
     elif recurrence == "yearly":
         return remind_at + relativedelta(years=1)
+    elif recurrence == "weekdays":
+        dt = remind_at + timedelta(days=1)
+        while dt.weekday() > 4:  # 5=сб, 6=вс
+            dt += timedelta(days=1)
+        return dt
+    elif recurrence == "weekends":
+        dt = remind_at + timedelta(days=1)
+        while dt.weekday() < 5:  # 0=пн … 4=пт
+            dt += timedelta(days=1)
+        return dt
     raise ValueError(f"Unknown recurrence: {recurrence}")
 
 
