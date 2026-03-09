@@ -318,6 +318,8 @@ class ReminderStates(StatesGroup):
     waiting_for_delete_id = State()
     waiting_for_reschedule = State()
     waiting_for_dot_clarification = State()
+    waiting_for_edit_text = State()
+    waiting_for_edit_time = State()
 
 
 @router.message(StateFilter(None), F.text, HasDateFilter())
@@ -538,6 +540,13 @@ def _build_table(reminders) -> str:
     return "<pre>" + "\n".join(rows) + "</pre>"
 
 
+def _list_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🗑 Удалить", callback_data="rem:del_mode"),
+        InlineKeyboardButton(text="✏️ Изменить", callback_data="rem:edit_mode"),
+    ]])
+
+
 def _delete_mode_keyboard(reminders) -> InlineKeyboardMarkup:
     pairs = [
         InlineKeyboardButton(
@@ -548,6 +557,19 @@ def _delete_mode_keyboard(reminders) -> InlineKeyboardMarkup:
     ]
     rows = [pairs[i:i + 2] for i in range(0, len(pairs), 2)]
     rows.append([InlineKeyboardButton(text="✕ Отмена", callback_data="rem:del_cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _edit_mode_keyboard(reminders) -> InlineKeyboardMarkup:
+    pairs = [
+        InlineKeyboardButton(
+            text=f"✏️ {r.remind_at.strftime('%d.%m %H:%M')}",
+            callback_data=f"rem:edit:{r.id}",
+        )
+        for r in reminders
+    ]
+    rows = [pairs[i:i + 2] for i in range(0, len(pairs), 2)]
+    rows.append([InlineKeyboardButton(text="✕ Отмена", callback_data="rem:edit_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -562,9 +584,7 @@ async def cmd_list(message: Message):
     await message.answer(
         f"📋 <b>Напоминания ({len(reminders)}):</b>\n\n"
         f"{_build_table(reminders)}",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="🗑 Удалить", callback_data="rem:del_mode"),
-        ]]),
+        reply_markup=_list_keyboard(),
     )
 
 
@@ -580,12 +600,7 @@ async def handle_del_mode(callback: CallbackQuery):
 
 @router.callback_query(F.data == "rem:del_cancel")
 async def handle_del_cancel(callback: CallbackQuery):
-    reminders = await _fetch_reminders(callback.from_user.id)
-    await callback.message.edit_reply_markup(
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="🗑 Удалить", callback_data="rem:del_mode"),
-        ]])
-    )
+    await callback.message.edit_reply_markup(reply_markup=_list_keyboard())
     await callback.answer()
 
 
@@ -621,6 +636,160 @@ async def handle_list_delete(callback: CallbackQuery):
         )
 
     await callback.answer(f"✅ Удалено: {deleted_text[:30]}")
+
+
+@router.callback_query(F.data == "rem:edit_mode")
+async def handle_edit_mode(callback: CallbackQuery):
+    reminders = await _fetch_reminders(callback.from_user.id)
+    if not reminders:
+        await callback.answer("Нет активных напоминаний.", show_alert=True)
+        return
+    await callback.message.edit_reply_markup(reply_markup=_edit_mode_keyboard(reminders))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "rem:edit_cancel")
+async def handle_edit_cancel(callback: CallbackQuery):
+    await callback.message.edit_reply_markup(reply_markup=_list_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data.regexp(r"^rem:edit:(\d+)$"))
+async def handle_edit_select(callback: CallbackQuery):
+    reminder_id = int(re.match(r"^rem:edit:(\d+)$", callback.data).group(1))
+    async with AsyncSessionLocal() as session:
+        reminder = await session.get(Reminder, reminder_id)
+        if not reminder or reminder.user_id != callback.from_user.id:
+            await callback.answer("Напоминание не найдено.", show_alert=True)
+            return
+        preview = reminder.text[:30]
+        dt_str = reminder.remind_at.strftime("%d.%m.%Y %H:%M")
+
+    await callback.message.edit_reply_markup(
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📝 Текст", callback_data=f"rem:edit_text:{reminder_id}"),
+                InlineKeyboardButton(text="⏰ Время", callback_data=f"rem:edit_time:{reminder_id}"),
+            ],
+            [InlineKeyboardButton(text="◀ Назад", callback_data="rem:edit_mode")],
+        ])
+    )
+    await callback.answer(f"{preview} — {dt_str}")
+
+
+@router.callback_query(F.data.regexp(r"^rem:edit_text:(\d+)$"))
+async def handle_edit_text_start(callback: CallbackQuery, state: FSMContext):
+    reminder_id = int(re.match(r"^rem:edit_text:(\d+)$", callback.data).group(1))
+    async with AsyncSessionLocal() as session:
+        reminder = await session.get(Reminder, reminder_id)
+        if not reminder or reminder.user_id != callback.from_user.id:
+            await callback.answer("Напоминание не найдено.", show_alert=True)
+            return
+        current_text = reminder.text
+        dt_str = reminder.remind_at.strftime("%d.%m.%Y %H:%M")
+
+    await state.set_state(ReminderStates.waiting_for_edit_text)
+    await state.update_data(reminder_id=reminder_id, reminder_dt_str=dt_str)
+    await callback.message.answer(
+        f"📝 <b>Текущий текст:</b> {current_text}\n"
+        f"⏰ <b>Время:</b> {dt_str}\n\n"
+        f"Введи новый текст напоминания:\n\n"
+        f"Для отмены: /cancel"
+    )
+    await callback.answer()
+
+
+@router.message(ReminderStates.waiting_for_edit_text, F.text)
+async def handle_edit_text_input(message: Message, state: FSMContext):
+    data = await state.get_data()
+    reminder_id = data["reminder_id"]
+    new_text = message.text.strip()
+
+    async with AsyncSessionLocal() as session:
+        reminder = await session.get(Reminder, reminder_id)
+        if not reminder or reminder.user_id != message.from_user.id:
+            await message.answer("❌ Напоминание не найдено.")
+            await state.clear()
+            return
+        reminder.text = new_text
+        dt_str = reminder.remind_at.strftime("%d.%m.%Y %H:%M")
+        await session.commit()
+
+    await state.clear()
+    await message.answer(
+        f"✅ Текст обновлён!\n\n"
+        f"📝 {new_text}\n"
+        f"⏰ {dt_str}"
+    )
+
+
+@router.callback_query(F.data.regexp(r"^rem:edit_time:(\d+)$"))
+async def handle_edit_time_start(callback: CallbackQuery, state: FSMContext):
+    reminder_id = int(re.match(r"^rem:edit_time:(\d+)$", callback.data).group(1))
+    async with AsyncSessionLocal() as session:
+        reminder = await session.get(Reminder, reminder_id)
+        if not reminder or reminder.user_id != callback.from_user.id:
+            await callback.answer("Напоминание не найдено.", show_alert=True)
+            return
+        reminder_text = reminder.text
+        original_remind_at = reminder.remind_at.isoformat()
+
+    user_tz = await _load_user_tz(callback.from_user.id)
+    _cancel_reminder_job(reminder_id)
+    await state.set_state(ReminderStates.waiting_for_edit_time)
+    await state.update_data(
+        reminder_id=reminder_id,
+        reminder_text=reminder_text,
+        original_remind_at=original_remind_at,
+        tz_name=user_tz.zone,
+    )
+    await callback.message.answer(
+        f"📝 <b>Текст:</b> {reminder_text}\n"
+        f"⏰ <b>Текущее время:</b> {datetime.fromisoformat(original_remind_at).strftime('%d.%m.%Y %H:%M')}\n\n"
+        f"Введи новую дату и время:\n"
+        f"Например: <i>завтра в 10:00</i>, <i>20.02 в 15:00</i>, <i>через 2 часа</i>\n\n"
+        f"Для отмены: /cancel"
+    )
+    await callback.answer()
+
+
+@router.message(ReminderStates.waiting_for_edit_time, F.text)
+async def handle_edit_time_input(message: Message, state: FSMContext):
+    data = await state.get_data()
+    reminder_id = data["reminder_id"]
+    tz_name = data.get("tz_name", settings.timezone)
+    user_tz = pytz.timezone(tz_name)
+    dp_s = _dateparser_settings(tz_name)
+
+    normalized = _expand_short_dates(_normalize_time(message.text.strip()), year=_now_tz(user_tz).year)
+    dt = dateparser.parse(normalized, languages=["ru"], settings=dp_s)
+
+    if dt is None or dt <= _now_tz(user_tz):
+        await message.answer(
+            "❌ Не смог распознать дату/время или оно в прошлом. Попробуй ещё раз.\n"
+            "Например: <i>завтра в 10:00</i>, <i>20.02 в 15:00</i>, <i>через 2 часа</i>"
+        )
+        return
+
+    async with AsyncSessionLocal() as session:
+        reminder = await session.get(Reminder, reminder_id)
+        if not reminder or reminder.user_id != message.from_user.id:
+            await message.answer("❌ Напоминание не найдено.")
+            await state.clear()
+            return
+        reminder.remind_at = dt
+        reminder.is_confirmed = False
+        reminder.is_snoozed = False
+        reminder.message_id = None
+        await session.commit()
+        schedule_reminder(reminder, tz=user_tz)
+
+    await state.clear()
+    await message.answer(
+        f"✅ Время обновлено!\n\n"
+        f"📝 {data['reminder_text']}\n"
+        f"⏰ {dt.strftime('%d.%m.%Y %H:%M')}"
+    )
 
 
 @router.message(Command("delete"))
@@ -700,7 +869,10 @@ async def cmd_cancel(message: Message, state: FSMContext):
         await message.answer("Нечего отменять.")
         return
 
-    if current_state == ReminderStates.waiting_for_reschedule.state:
+    if current_state in (
+        ReminderStates.waiting_for_reschedule.state,
+        ReminderStates.waiting_for_edit_time.state,
+    ):
         data = await state.get_data()
         reminder_id = data.get("reminder_id")
         original_remind_at_str = data.get("original_remind_at")
