@@ -36,7 +36,7 @@ async def on_startup():
     logger.info("Установка меню команд...")
     await bot.set_my_commands([
         BotCommand(command="list",     description="Мои напоминания"),
-        BotCommand(command="delete",   description="Удалить напоминание /delete"),
+        BotCommand(command="delete",   description="Удалить напоминание"),
         BotCommand(command="settings", description="Настройки"),
         BotCommand(command="cancel",   description="Отменить текущее действие"),
         BotCommand(command="help",     description="Справка"),
