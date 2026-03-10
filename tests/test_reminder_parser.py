@@ -233,6 +233,12 @@ class TestParseReminder:
         assert "напомни" not in text.lower()
         assert "мне" not in text.lower()
 
+    def test_prefix_napomniт_stripped(self):
+        result = _parse_reminder("напомнить тест завтра в 10:00")
+        assert result is not None
+        text, _ = result
+        assert text.strip().startswith("тест")
+
     def test_through_minutes(self):
         result = _parse_reminder("выпить таблетку через 30 минут")
         assert result is not None
