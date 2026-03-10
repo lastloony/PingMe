@@ -525,16 +525,16 @@ async def _fetch_reminders(user_id: int) -> list:
 
 
 def _build_table(reminders) -> str:
-    COL_TEXT = 18
-    header = f"{'ID':<4} {'Дата':<11} {'Время':<6} {'Текст'}"
-    sep = "─" * (4 + 1 + 11 + 1 + 6 + 1 + COL_TEXT)
+    COL_TEXT = 22
+    header = f"{'Дата':<11} {'Время':<6} {'Текст'}"
+    sep = "─" * (11 + 1 + 6 + 1 + COL_TEXT)
     rows = [header, sep]
     for r in reminders:
         text = r.text[:COL_TEXT] + "…" if len(r.text) > COL_TEXT else r.text
         flag = " ⏱" if r.is_snoozed else ""
         rec_flag = f" {_RECURRENCE_SHORT.get(r.recurrence, '')}" if r.recurrence else ""
         rows.append(
-            f"{r.id:<4} {r.remind_at.strftime('%d.%m.%Y'):<11} "
+            f"{r.remind_at.strftime('%d.%m.%Y'):<11} "
             f"{r.remind_at.strftime('%H:%M'):<6} {text}{flag}{rec_flag}"
         )
     return "<pre>" + "\n".join(rows) + "</pre>"
