@@ -417,7 +417,7 @@ async def _handle_reminder_text(
     await _save_reminder(message, uid, reminder_text, remind_at, state, user_tz, recurrence=recurrence)
 
 
-@router.message(ReminderStates.waiting_for_time, F.text)
+@router.message(ReminderStates.waiting_for_time, F.text, ~F.text.startswith("/"))
 async def handle_time_input(message: Message, state: FSMContext):
     """Получает время от пользователя и завершает создание напоминания."""
     data = await state.get_data()
@@ -699,7 +699,7 @@ async def handle_edit_text_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(ReminderStates.waiting_for_edit_text, F.text)
+@router.message(ReminderStates.waiting_for_edit_text, F.text, ~F.text.startswith("/"))
 async def handle_edit_text_input(message: Message, state: FSMContext):
     data = await state.get_data()
     reminder_id = data["reminder_id"]
@@ -753,7 +753,7 @@ async def handle_edit_time_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(ReminderStates.waiting_for_edit_time, F.text)
+@router.message(ReminderStates.waiting_for_edit_time, F.text, ~F.text.startswith("/"))
 async def handle_edit_time_input(message: Message, state: FSMContext):
     data = await state.get_data()
     reminder_id = data["reminder_id"]
@@ -826,7 +826,7 @@ async def cmd_delete(message: Message, state: FSMContext):
     await _do_delete(message, parts[1], state)
 
 
-@router.message(ReminderStates.waiting_for_delete_id, F.text)
+@router.message(ReminderStates.waiting_for_delete_id, F.text, ~F.text.startswith("/"))
 async def handle_delete_id_input(message: Message, state: FSMContext):
     await _do_delete(message, message.text.strip(), state)
 
@@ -1045,7 +1045,7 @@ async def handle_reschedule_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(ReminderStates.waiting_for_reschedule, F.text)
+@router.message(ReminderStates.waiting_for_reschedule, F.text, ~F.text.startswith("/"))
 async def handle_reschedule_input(message: Message, state: FSMContext):
     data = await state.get_data()
     reminder_id = data["reminder_id"]
