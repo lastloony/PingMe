@@ -74,7 +74,7 @@ _DAY_RE     = re.compile(r"\b(\d{1,2})\s*(?:дня|днём)\b", flags=re.IGNORE
 _HOUR_RE    = re.compile(r"(?<!через )\b(\d{1,2})\s*час(?:ов|а|ах)?\b", flags=re.IGNORECASE)
 
 # Префикс «напомни [мне]» — убираем из текста напоминания
-_PREFIX_RE  = re.compile(r"^напомни(?:те)?\s*(?:мне\s*)?", flags=re.IGNORECASE)
+_PREFIX_RE  = re.compile(r"^напомни(?:те|ть)?\s*(?:мне\s*)?", flags=re.IGNORECASE)
 
 # Явные датовые паттерны: 19.02, 19.02.2026, 19/02
 _DATE_NUMERIC_RE = re.compile(
