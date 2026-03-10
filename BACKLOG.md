@@ -1,5 +1,58 @@
 # Бэклог
 
+## [IDEA] Страница статистики (Telegram Web App)
+
+**Статус:** спланировано, не начато
+**Приоритет:** средний
+
+### Суть
+
+Страница статистики открывается как Telegram Web App по скрытой команде `/mystats`.
+Показывает агрегированные данные по напоминаниям пользователя и по всей системе.
+
+### Архитектура
+
+```
+app/
+├── api/
+│   ├── app.py            — подключить StaticFiles + новый роутер
+│   ├── schemas.py         — добавить UserStatsResponse, GlobalStatsResponse, StatsResponse
+│   └── routes_stats.py   — СОЗДАТЬ: GET /api/v1/stats + валидация initData
+├── bot/handlers/
+│   └── stats.py          — СОЗДАТЬ: хендлер /mystats с кнопкой WebApp
+└── static/stats/
+    └── index.html        — СОЗДАТЬ: TWA-страница (всё inline)
+```
+
+### Метрики
+
+| Блок | Метрика |
+|---|---|
+| Мои напоминания | Всего / Активных / Выполнено / Отложено / Повторяемых |
+| В системе | Всего напоминаний / Активных / Уникальных пользователей |
+
+### Ключевые детали
+
+- **Аутентификация:** HMAC-SHA256 валидация `initData` из Telegram WebApp SDK (заголовок `X-Telegram-Init-Data`), ключ = `HMAC("WebAppData", bot_token)`
+- **Frontend:** один `index.html` с CSS/JS inline, CSS-переменные Telegram для авто-темизации
+- **Конфиг:** добавить `webapp_base_url: str` в `config.py`
+- **HTTPS обязателен** — в dev использовать ngrok/Cloudflare Tunnel
+- **Порядок импортов:** `stats` до `fallback` в `main.py`
+- **Зависимость:** добавить `aiofiles` в `requirements.txt` для `StaticFiles`
+
+### Шаги реализации
+
+1. `config.py` — добавить `webapp_base_url`, `requirements.txt` — добавить `aiofiles`
+2. `schemas.py` — три новые Pydantic-модели
+3. `routes_stats.py` — валидация initData + SQL-агрегаты (`func.count`, `func.sum`, `case`)
+4. `app.py` — подключить роутер + смонтировать `/stats → static/stats`
+5. `static/stats/index.html` — вёрстка + JS
+6. `bot/handlers/stats.py` — хендлер `/mystats` (команда не в `set_my_commands`)
+7. `main.py` — импорт нового хендлера
+8. Тест через ngrok в Telegram
+
+---
+
 ## [IDEA] Django Bot Manager — веб-панель управления ботами
 
 **Статус:** идея, не начато
