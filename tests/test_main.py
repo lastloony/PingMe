@@ -123,16 +123,23 @@ async def test_deleteme_deletes_user_data():
     msg = _make_message()
     msg.from_user.id = 12345
 
-    with patch("app.bot.handlers.basic.AsyncSessionLocal") as mock_session_cls:
+    with patch("app.bot.handlers.basic.AsyncSessionLocal") as mock_session_cls, \
+         patch("app.bot.handlers.basic.scheduler") as mock_scheduler:
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [1, 2]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+
         mock_session = AsyncMock()
         mock_session_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_session.execute = AsyncMock()
+        mock_session.execute = AsyncMock(return_value=mock_result)
         mock_session.commit = AsyncMock()
+        mock_scheduler.get_job.return_value = None
 
         await cmd_deleteme(msg)
 
-    assert mock_session.execute.call_count == 2
+    assert mock_session.execute.call_count == 3  # select + 2x delete
     mock_session.commit.assert_called_once()
     assert "удалены" in msg.answer.call_args.args[0]
 

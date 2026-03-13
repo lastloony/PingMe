@@ -2,11 +2,12 @@
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardRemove
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from app.bot.bot import dp
 from app.database import Reminder, UserSettings
 from app.database.base import AsyncSessionLocal
+from app.services.scheduler import scheduler
 
 router = Router()
 
@@ -41,6 +42,16 @@ async def cmd_deleteme(message: Message):
     """Удаляет все данные пользователя"""
     user_id = message.from_user.id
     async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Reminder.id).where(Reminder.user_id == user_id)
+        )
+        reminder_ids = result.scalars().all()
+
+        for rid in reminder_ids:
+            job = scheduler.get_job(f"reminder_{rid}")
+            if job:
+                job.remove()
+
         await session.execute(delete(Reminder).where(Reminder.user_id == user_id))
         await session.execute(delete(UserSettings).where(UserSettings.user_id == user_id))
         await session.commit()
