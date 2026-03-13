@@ -40,6 +40,8 @@ async def on_startup():
         BotCommand(command="settings", description="Настройки"),
         BotCommand(command="cancel",   description="Отменить текущее действие"),
         BotCommand(command="help",     description="Справка"),
+        BotCommand(command="privacy",  description="Политика конфиденциальности"),
+        BotCommand(command="deleteme", description="Удалить все мои данные"),
     ])
 
     logger.info("Бот успешно запущен!")

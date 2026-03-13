@@ -2,8 +2,11 @@
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardRemove
+from sqlalchemy import delete
 
 from app.bot.bot import dp
+from app.database import Reminder, UserSettings
+from app.database.base import AsyncSessionLocal
 
 router = Router()
 
@@ -30,6 +33,41 @@ async def cmd_start(message: Message):
         "/settings — настройки\n"
         "/help — справка",
         reply_markup=ReplyKeyboardRemove(),
+    )
+
+
+@router.message(Command("deleteme"))
+async def cmd_deleteme(message: Message):
+    """Удаляет все данные пользователя"""
+    user_id = message.from_user.id
+    async with AsyncSessionLocal() as session:
+        await session.execute(delete(Reminder).where(Reminder.user_id == user_id))
+        await session.execute(delete(UserSettings).where(UserSettings.user_id == user_id))
+        await session.commit()
+    await message.answer(
+        "🗑 Все ваши данные удалены:\n"
+        "• напоминания\n"
+        "• настройки\n\n"
+        "Если захотите снова — просто напишите напоминание."
+    )
+
+
+@router.message(Command("privacy"))
+async def cmd_privacy(message: Message):
+    """Политика конфиденциальности"""
+    await message.answer(
+        "🔒 <b>Политика конфиденциальности</b>\n\n"
+        "<b>Какие данные мы храним:</b>\n"
+        "• Ваш Telegram ID — для привязки напоминаний\n"
+        "• Тексты напоминаний и время срабатывания\n"
+        "• Настройки (часовой пояс, интервал повтора)\n\n"
+        "<b>Чего мы НЕ храним:</b>\n"
+        "• Имя, фамилия, @username\n"
+        "• История сообщений\n\n"
+        "<b>Как удалить свои данные:</b>\n"
+        "Команда /deleteme — удаляет все ваши напоминания и настройки немедленно.\n\n"
+        "<b>Хранение:</b> данные хранятся на частном сервере, "
+        "не передаются третьим лицам."
     )
 
 
@@ -66,7 +104,9 @@ async def cmd_help(message: Message):
         "/list — список активных напоминаний (изменение и удаление)\n"
         "/delete &lt;ID&gt; — удалить напоминание\n"
         "/settings — настройки (интервал повтора)\n"
-        "/cancel — отменить текущее действие"
+        "/cancel — отменить текущее действие\n"
+        "/privacy — политика конфиденциальности\n"
+        "/deleteme — удалить все мои данные"
     )
 
 
