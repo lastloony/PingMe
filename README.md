@@ -77,6 +77,8 @@ Telegram-бот для создания напоминаний на естест
 | `/settings`    | Настройки (интервал повтора, часовой пояс) |
 | `/help`        | Справка                                    |
 | `/cancel`      | Отменить текущее действие                  |
+| `/privacy`     | Политика конфиденциальности                |
+| `/deleteme`    | Удалить все свои данные                    |
 
 ## Запуск через Docker (рекомендуется)
 
@@ -136,6 +138,30 @@ docker compose logs -f bot
 | `API_PORT`          | Порт FastAPI                                | `8000`                     |
 | `TIMEZONE`          | Часовой пояс планировщика (глобальный fallback) | `Europe/Moscow`        |
 | `DEBUG`             | Режим отладки (повтор раз в 1 мин)          | `false`                    |
+| `REMINDER_ENCRYPTION_KEY` | Fernet-ключ для шифрования текстов напоминаний | `""` (выключено) |
+
+## Шифрование напоминаний
+
+Тексты напоминаний хранятся в БД в зашифрованном виде (Fernet / AES-128-CBC + HMAC-SHA256).
+Для включения сгенерируй ключ и добавь его в `.env`:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+```env
+REMINDER_ENCRYPTION_KEY=сюда_вставить_ключ
+```
+
+> ⚠️ Потеря ключа означает потерю всех напоминаний. Храни его отдельно от БД.
+
+Если в БД уже есть данные в открытом виде — зашифруй их скриптом миграции (запускать один раз):
+
+```bash
+python scripts/encrypt_existing_reminders.py
+```
+
+Без ключа (`REMINDER_ENCRYPTION_KEY=`) приложение работает в обычном режиме — тексты хранятся открыто.
 
 ## API
 
@@ -189,7 +215,7 @@ pingme/
 ├── app/
 │   ├── bot/
 │   │   └── handlers/
-│   │       ├── basic.py       # /start, /help
+│   │       ├── basic.py       # /start, /help, /privacy, /deleteme
 │   │       ├── reminders.py   # парсинг и создание напоминаний
 │   │       ├── settings.py    # /settings — настройки пользователя
 │   │       └── fallback.py    # неизвестные команды и текст (всегда последний)

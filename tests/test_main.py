@@ -8,11 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.bot.handlers.basic import cmd_start, cmd_help
+from app.bot.handlers.basic import cmd_start, cmd_help, cmd_privacy, cmd_deleteme
 from app.bot.handlers.fallback import unknown_command
 
 
-EXPECTED_COMMANDS = {"list", "delete", "settings", "cancel", "help"}
+EXPECTED_COMMANDS = {"list", "delete", "settings", "cancel", "help", "privacy", "deleteme"}
 
 
 @pytest.fixture
@@ -96,11 +96,52 @@ async def test_start_mentions_commands(command):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("command", ["/list", "/delete", "/settings", "/cancel"])
+@pytest.mark.parametrize("command", ["/list", "/delete", "/settings", "/cancel", "/privacy", "/deleteme"])
 async def test_help_mentions_commands(command):
     msg = _make_message()
     await cmd_help(msg)
     assert command in msg.answer.call_args.args[0]
+
+
+# ---------------------------------------------------------------------------
+# /privacy
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_privacy_mentions_deleteme():
+    msg = _make_message()
+    await cmd_privacy(msg)
+    assert "/deleteme" in msg.answer.call_args.args[0]
+
+
+# ---------------------------------------------------------------------------
+# /deleteme
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_deleteme_deletes_user_data():
+    msg = _make_message()
+    msg.from_user.id = 12345
+
+    with patch("app.bot.handlers.basic.AsyncSessionLocal") as mock_session_cls, \
+         patch("app.bot.handlers.basic.scheduler") as mock_scheduler:
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [1, 2]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+
+        mock_session = AsyncMock()
+        mock_session_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session.commit = AsyncMock()
+        mock_scheduler.get_job.return_value = None
+
+        await cmd_deleteme(msg)
+
+    assert mock_session.execute.call_count == 3  # select + 2x delete
+    mock_session.commit.assert_called_once()
+    assert "удалены" in msg.answer.call_args.args[0]
 
 
 # ---------------------------------------------------------------------------
