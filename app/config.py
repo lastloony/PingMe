@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     debug: bool = True
     timezone: str = "Europe/Moscow"
 
+    # Шифрование напоминаний (Fernet-ключ, generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+    reminder_encryption_key: str = ""
+
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",
         env_file_encoding="utf-8",

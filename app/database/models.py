@@ -2,10 +2,11 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, Integer, DateTime, Boolean, Text, String
+from sqlalchemy import BigInteger, Integer, DateTime, Boolean, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
+from app.crypto import EncryptedText
 
 DEFAULT_SNOOZE_MINUTES = 15
 DEFAULT_TIMEZONE = "Europe/Moscow"
@@ -17,7 +18,7 @@ class Reminder(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, index=True)
-    text: Mapped[str] = mapped_column(Text)
+    text: Mapped[str] = mapped_column(EncryptedText)
     remind_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     is_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

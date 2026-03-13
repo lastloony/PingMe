@@ -138,6 +138,24 @@ docker compose logs -f bot
 | `API_PORT`          | Порт FastAPI                                | `8000`                     |
 | `TIMEZONE`          | Часовой пояс планировщика (глобальный fallback) | `Europe/Moscow`        |
 | `DEBUG`             | Режим отладки (повтор раз в 1 мин)          | `false`                    |
+| `REMINDER_ENCRYPTION_KEY` | Fernet-ключ для шифрования текстов напоминаний | `""` (выключено) |
+
+## Шифрование напоминаний
+
+Тексты напоминаний хранятся в БД в зашифрованном виде (Fernet / AES-128-CBC + HMAC-SHA256).
+Для включения сгенерируй ключ и добавь его в `.env`:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+```env
+REMINDER_ENCRYPTION_KEY=сюда_вставить_ключ
+```
+
+> ⚠️ Потеря ключа означает потерю всех напоминаний. Храни его отдельно от БД.
+
+Без ключа (`REMINDER_ENCRYPTION_KEY=`) приложение работает в обычном режиме — тексты хранятся открыто.
 
 ## API
 
