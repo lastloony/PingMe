@@ -340,6 +340,40 @@ class TestParseReminder:
         assert dt.hour == 18
         assert dt.minute == 30
 
+    # --- «N числа» ---
+
+    def test_chisla_future_month(self):
+        """«1 числа» когда 1-е уже прошло → следующий месяц."""
+        now = datetime(2026, 3, 18, 12, 0)
+        result = _parse_reminder("оплатить счёт 1 числа в 10:00", now=now)
+        assert result is not None
+        text, dt = result
+        assert dt.day == 1
+        assert dt.month == 4
+        assert dt.year == 2026
+        assert dt.hour == 10
+        assert "оплатить счёт" in text
+
+    def test_chisla_same_month(self):
+        """«25 числа» когда 25-е ещё не наступило → текущий месяц."""
+        now = datetime(2026, 3, 18, 12, 0)
+        result = _parse_reminder("заплатить аренду 25 числа в 09:00", now=now)
+        assert result is not None
+        _, dt = result
+        assert dt.day == 25
+        assert dt.month == 3
+        assert dt.year == 2026
+
+    def test_chisla_december_rolls_over(self):
+        """«5 числа» в декабре → январь следующего года."""
+        now = datetime(2026, 12, 10, 12, 0)
+        result = _parse_reminder("отчёт 5 числа в 10:00", now=now)
+        assert result is not None
+        _, dt = result
+        assert dt.day == 5
+        assert dt.month == 1
+        assert dt.year == 2027
+
     # --- Не должны парситься ---
 
     def test_no_date_returns_none(self):
