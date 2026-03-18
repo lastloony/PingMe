@@ -374,6 +374,16 @@ class TestParseReminder:
         assert dt.month == 1
         assert dt.year == 2027
 
+    def test_chisla_31_skips_short_month(self):
+        """«31 числа» в апреле (нет 31-го) → май."""
+        now = datetime(2026, 4, 5, 12, 0)
+        result = _parse_reminder("оплатить 31 числа в 10:00", now=now)
+        assert result is not None
+        _, dt = result
+        assert dt.day == 31
+        assert dt.month == 5
+        assert dt.year == 2026
+
     # --- Не должны парситься ---
 
     def test_no_date_returns_none(self):
