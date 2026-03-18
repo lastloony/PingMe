@@ -1,4 +1,5 @@
 """Хендлеры напоминаний с парсингом естественного языка"""
+import calendar
 import re
 from datetime import datetime, timedelta
 
@@ -219,15 +220,12 @@ def _normalize_chisla(text: str, now: datetime | None = None) -> str:
     def replace(m: re.Match) -> str:
         day = int(m.group(1))
         year, month = now.year, now.month
-        # Ищем ближайший месяц где этот день существует и ещё не прошёл
         for _ in range(24):  # не более 2 лет вперёд
-            try:
+            if day <= calendar.monthrange(year, month)[1]:
                 candidate = now.replace(year=year, month=month, day=day,
                                         hour=0, minute=0, second=0, microsecond=0)
                 if candidate > now:
                     return f"{day:02d}.{month:02d}.{year}"
-            except ValueError:
-                pass  # в этом месяце нет такого дня
             month += 1
             if month > 12:
                 month = 1
