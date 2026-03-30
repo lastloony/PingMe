@@ -7,6 +7,7 @@ from dateutil.relativedelta import relativedelta
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 
 from app.bot.bot import bot
@@ -46,7 +47,7 @@ def _build_keyboard(reminder_id: int) -> InlineKeyboardMarkup:
     ])
 
 
-async def send_reminder(reminder_id: int):
+async def send_reminder(reminder_id: int, note: str = ""):
     """Отправляет напоминание пользователю с кнопками подтверждения"""
     async with AsyncSessionLocal() as session:
         reminder = await session.get(Reminder, reminder_id)
@@ -60,6 +61,10 @@ async def send_reminder(reminder_id: int):
         repeat_minutes = settings_obj.snooze_minutes if settings_obj else REMINDER_REPEAT_MINUTES
         user_tz = pytz.timezone(settings_obj.timezone if settings_obj else DEFAULT_TIMEZONE)
 
+        text = f"⏰ <b>Напоминание!</b>\n\n{reminder.text}"
+        if note:
+            text += f"\n\n{note}"
+
         try:
             if reminder.message_id:
                 try:
@@ -69,7 +74,7 @@ async def send_reminder(reminder_id: int):
 
             msg = await bot.send_message(
                 chat_id=reminder.user_id,
-                text=f"⏰ <b>Напоминание!</b>\n\n{reminder.text}",
+                text=text,
                 reply_markup=_build_keyboard(reminder_id),
             )
             reminder.message_id = msg.message_id
@@ -83,11 +88,21 @@ async def send_reminder(reminder_id: int):
                 args=[reminder_id],
                 id=f"reminder_{reminder_id}",
                 replace_existing=True,
-                misfire_grace_time=60,
+                misfire_grace_time=None,
             )
             logger.info(f"Напоминание {reminder_id} отправлено, повтор через {repeat_minutes} мин")
         except Exception as e:
             logger.error(f"Ошибка при отправке напоминания {reminder_id}: {e}")
+            retry_time = _now_tz(user_tz) + timedelta(minutes=5)
+            scheduler.add_job(
+                send_reminder,
+                trigger=DateTrigger(timezone=user_tz, run_date=retry_time),
+                args=[reminder_id, "⚠️ <i>Предыдущая попытка отправки не удалась — повтор</i>"],
+                id=f"reminder_{reminder_id}",
+                replace_existing=True,
+                misfire_grace_time=None,
+            )
+            logger.warning(f"Напоминание {reminder_id}: повтор через 5 мин")
 
 
 def _next_occurrence(remind_at: datetime, recurrence: str) -> datetime:
@@ -124,7 +139,7 @@ def schedule_reminder(reminder: Reminder, tz: pytz.BaseTzInfo | None = None):
         args=[reminder.id],
         id=f"reminder_{reminder.id}",
         replace_existing=True,
-        misfire_grace_time=60,
+        misfire_grace_time=None,
     )
     logger.info(f"Напоминание {reminder.id} запланировано на {reminder.remind_at}")
 
@@ -172,10 +187,14 @@ async def load_pending_reminders():
                 reminder.remind_at = next_dt
                 schedule_reminder(reminder, tz=user_tz)
             else:
+                delay_min = int((now - reminder.remind_at).total_seconds() / 60)
+                overdue_note = (
+                    f"🕐 <i>Уведомление задержано на {delay_min} мин — бот был недоступен</i>"
+                )
                 scheduler.add_job(
                     send_reminder,
                     trigger=DateTrigger(timezone=user_tz, run_date=now),
-                    args=[reminder.id],
+                    args=[reminder.id, overdue_note],
                     id=f"reminder_{reminder.id}",
                     replace_existing=True,
                 )
@@ -187,8 +206,50 @@ async def load_pending_reminders():
     logger.info(f"Загружено напоминаний: {scheduled} запланировано, {overdue} просрочено")
 
 
+async def catchup_missed_reminders():
+    """Проверяет просроченные напоминания без активных задач и планирует их немедленно."""
+    async with AsyncSessionLocal() as session:
+        now = _now()
+        result = await session.execute(
+            select(Reminder).where(
+                Reminder.is_active == True,
+                Reminder.is_confirmed == False,
+                Reminder.remind_at <= now,
+            )
+        )
+        missed = result.scalars().all()
+
+    recovered = 0
+    now = _now()
+    for reminder in missed:
+        job_id = f"reminder_{reminder.id}"
+        if not scheduler.get_job(job_id):
+            delay_min = int((now - reminder.remind_at).total_seconds() / 60)
+            overdue_note = (
+                f"🕐 <i>Уведомление задержано на {delay_min} мин — бот был недоступен</i>"
+            )
+            scheduler.add_job(
+                send_reminder,
+                trigger=DateTrigger(timezone=_TZ, run_date=now),
+                args=[reminder.id, overdue_note],
+                id=job_id,
+                replace_existing=True,
+                misfire_grace_time=None,
+            )
+            recovered += 1
+
+    if recovered:
+        logger.warning(f"Watchdog: восстановлено {recovered} потерянных напоминаний")
+
+
 def start_scheduler():
     """Запускает планировщик"""
+    scheduler.add_job(
+        catchup_missed_reminders,
+        trigger=IntervalTrigger(minutes=5),
+        id="watchdog_catchup",
+        replace_existing=True,
+    )
     scheduler.start()
 
 

@@ -5,11 +5,11 @@
     pytest tests/test_scheduler.py -v
 """
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from app.services.scheduler import _build_keyboard, send_reminder
+from app.services.scheduler import _build_keyboard, catchup_missed_reminders, send_reminder
 
 
 # ---------------------------------------------------------------------------
@@ -149,3 +149,134 @@ async def test_send_reminder_schedules_repeat_job():
     assert captured["id"] == "reminder_10"
     assert isinstance(captured["trigger"], DateTrigger)
     assert captured["trigger"].run_date.replace(tzinfo=None) == fixed_now + timedelta(minutes=15)
+
+
+@pytest.mark.asyncio
+async def test_send_reminder_note_appended_to_text():
+    """note передаётся как второй аргумент и попадает в текст сообщения."""
+    reminder = _make_reminder(id=5, text="сдать отчёт")
+    mock_msg = MagicMock()
+    mock_msg.message_id = 1
+    session = _make_session(reminder)
+
+    with patch("app.services.scheduler.AsyncSessionLocal", return_value=session), \
+         patch("app.services.scheduler.bot") as mock_bot, \
+         patch("app.services.scheduler.scheduler"):
+        mock_bot.send_message = AsyncMock(return_value=mock_msg)
+        await send_reminder(5, note="⚠️ повтор")
+
+    text = mock_bot.send_message.call_args.kwargs["text"]
+    assert "сдать отчёт" in text
+    assert "⚠️ повтор" in text
+
+
+@pytest.mark.asyncio
+async def test_send_reminder_no_note_by_default():
+    """Без note текст не содержит лишних строк."""
+    reminder = _make_reminder(id=5, text="выгулять собаку")
+    mock_msg = MagicMock()
+    mock_msg.message_id = 1
+    session = _make_session(reminder)
+
+    with patch("app.services.scheduler.AsyncSessionLocal", return_value=session), \
+         patch("app.services.scheduler.bot") as mock_bot, \
+         patch("app.services.scheduler.scheduler"):
+        mock_bot.send_message = AsyncMock(return_value=mock_msg)
+        await send_reminder(5)
+
+    text = mock_bot.send_message.call_args.kwargs["text"]
+    assert text.strip().endswith("выгулять собаку")
+
+
+@pytest.mark.asyncio
+async def test_send_reminder_retries_with_failure_note_on_error():
+    """При ошибке отправки планируется повтор через 5 мин с пометкой о сбое."""
+    reminder = _make_reminder(id=7)
+    session = _make_session(reminder)
+
+    captured = {}
+
+    def capture(func, trigger, args, **kwargs):
+        captured["args"] = args
+        captured["id"] = kwargs.get("id")
+
+    mock_scheduler = MagicMock()
+    mock_scheduler.add_job.side_effect = capture
+
+    fixed_now = datetime.now()
+    with patch("app.services.scheduler.AsyncSessionLocal", return_value=session), \
+         patch("app.services.scheduler.bot") as mock_bot, \
+         patch("app.services.scheduler.scheduler", mock_scheduler), \
+         patch("app.services.scheduler._now_tz", side_effect=lambda tz: fixed_now):
+        mock_bot.send_message = AsyncMock(side_effect=Exception("Telegram unavailable"))
+        await send_reminder(7)
+
+    assert captured["id"] == "reminder_7"
+    assert captured["args"][0] == 7
+    note = captured["args"][1]
+    assert "не удалась" in note or "повтор" in note.lower()
+
+
+@pytest.mark.asyncio
+async def test_catchup_schedules_only_jobs_without_active_job():
+    """Watchdog планирует напоминания без активного job и пропускает с активным."""
+    from datetime import timezone
+
+    past = datetime.now() - timedelta(hours=1)
+    rem1 = _make_reminder(id=1)
+    rem1.remind_at = past
+    rem2 = _make_reminder(id=2)
+    rem2.remind_at = past
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = [rem1, rem2]
+
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=mock_result)
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+
+    mock_scheduler = MagicMock()
+    # rem1 — нет активного job, rem2 — job уже есть
+    mock_scheduler.get_job.side_effect = lambda job_id: None if job_id == "reminder_1" else MagicMock()
+
+    with patch("app.services.scheduler.AsyncSessionLocal", return_value=session), \
+         patch("app.services.scheduler.scheduler", mock_scheduler):
+        await catchup_missed_reminders()
+
+    scheduled_ids = [c.kwargs.get("id") or c.args[1] for c in mock_scheduler.add_job.call_args_list]
+    assert "reminder_1" in scheduled_ids
+    assert "reminder_2" not in scheduled_ids
+
+
+@pytest.mark.asyncio
+async def test_catchup_overdue_note_contains_delay():
+    """Watchdog передаёт в note количество минут задержки."""
+    past = datetime.now() - timedelta(minutes=30)
+    rem = _make_reminder(id=3)
+    rem.remind_at = past
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = [rem]
+
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=mock_result)
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+
+    mock_scheduler = MagicMock()
+    mock_scheduler.get_job.return_value = None
+
+    captured_args = []
+
+    def capture(func, trigger, args, **kwargs):
+        captured_args.extend(args)
+
+    mock_scheduler.add_job.side_effect = capture
+
+    with patch("app.services.scheduler.AsyncSessionLocal", return_value=session), \
+         patch("app.services.scheduler.scheduler", mock_scheduler):
+        await catchup_missed_reminders()
+
+    note = captured_args[1]
+    assert "30" in note or "мин" in note
