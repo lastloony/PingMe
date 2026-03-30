@@ -1,4 +1,5 @@
 """Хендлеры напоминаний с парсингом естественного языка"""
+import calendar
 import re
 from datetime import datetime, timedelta
 
@@ -191,6 +192,9 @@ def _normalize_time(text: str) -> str:
     return text
 
 
+# «N числа» — день месяца без явного месяца
+_CHISLA_RE = re.compile(r"\b(\d{1,2})\s+числа?\b", flags=re.IGNORECASE)
+
 # Только DD.MM без года — не трогаем DD.MM.YYYY
 _SHORT_DATE_RE = re.compile(r"\b(\d{1,2})[./](\d{1,2})(?![./]\d)\b")
 
@@ -204,6 +208,31 @@ def _expand_short_dates(text: str, year: int | None = None) -> str:
         return f"{m.group(1)}.{m.group(2)}.{year}"
 
     return _SHORT_DATE_RE.sub(expand, text)
+
+
+def _normalize_chisla(text: str, now: datetime | None = None) -> str:
+    """«1 числа» → «01.04.2026» — следующее вхождение этого дня месяца."""
+    if not _CHISLA_RE.search(text):
+        return text
+    if now is None:
+        now = _now()
+
+    def replace(m: re.Match) -> str:
+        day = int(m.group(1))
+        year, month = now.year, now.month
+        for _ in range(24):  # не более 2 лет вперёд
+            if day <= calendar.monthrange(year, month)[1]:
+                candidate = now.replace(year=year, month=month, day=day,
+                                        hour=0, minute=0, second=0, microsecond=0)
+                if candidate > now:
+                    return f"{day:02d}.{month:02d}.{year}"
+            month += 1
+            if month > 12:
+                month = 1
+                year += 1
+        return m.group()
+
+    return _CHISLA_RE.sub(replace, text)
 
 
 def _find_dot_ambiguity(text: str) -> tuple[str, int, int] | None:
@@ -262,6 +291,7 @@ def _parse_reminder(
         now = _now()
 
     text = _normalize_time(_PREFIX_RE.sub("", raw.strip()))
+    text = _normalize_chisla(text, now=now)
 
     fragments = _extract_datetime_fragments(text)
     if not fragments:
